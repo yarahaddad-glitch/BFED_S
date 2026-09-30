@@ -64,55 +64,71 @@ link3d_names = {
 
 
 # ============================================================
-# TEMPORARY 6-JOINT ROBOT
-# These are fake DH values ONLY for loading all 7 meshes.
+# KAWASAKI RS007N - STANDARD DH PARAMETERS
+# Based on Kawasaki's official RS007N kinematic model
 # ============================================================
 
+deg = pi / 180
+
 links = [
+
+    # J1
     rtb.RevoluteDH(
-        d=0,
-        a=0,
-        alpha=0,
-        qlim=[-pi, pi]
+        d=0.360,
+        a=0.0,
+        alpha=pi / 2,
+        offset=-pi / 2,
+        flip=True,
+        qlim=[-180 * deg, 180 * deg]
     ),
 
+    # J2
     rtb.RevoluteDH(
-        d=0,
-        a=0,
-        alpha=0,
-        qlim=[-pi, pi]
+        d=0.0,
+        a=0.355,
+        alpha=0.0,
+        offset=pi / 2,
+        qlim=[-135 * deg, 135 * deg]
     ),
 
+    # J3
     rtb.RevoluteDH(
-        d=0,
-        a=0,
-        alpha=0,
-        qlim=[-pi, pi]
+        d=0.0,
+        a=0.0,
+        alpha=pi / 2,
+        offset=pi / 2,
+        flip=True,
+        qlim=[-155 * deg, 155 * deg]
     ),
 
+    # J4
     rtb.RevoluteDH(
-        d=0,
-        a=0,
-        alpha=0,
-        qlim=[-pi, pi]
+        d=0.375,
+        a=0.0,
+        alpha=pi / 2,
+        offset=pi,
+        qlim=[-200 * deg, 200 * deg]
     ),
 
+    # J5
     rtb.RevoluteDH(
-        d=0,
-        a=0,
-        alpha=0,
-        qlim=[-pi, pi]
+        d=0.0,
+        a=0.0,
+        alpha=-pi / 2,
+        offset=0.0,
+        flip=True,
+        qlim=[-125 * deg, 125 * deg]
     ),
 
+    # J6
     rtb.RevoluteDH(
-        d=0,
-        a=0,
-        alpha=0,
-        qlim=[-pi, pi]
+        d=0.078,
+        a=0.0,
+        alpha=0.0,
+        offset=pi / 2,
+        qlim=[-360 * deg, 360 * deg]
     ),
 ]
-
-
 # ============================================================
 # CREATE RS007N
 # ============================================================
@@ -165,5 +181,42 @@ print("Number of graphical meshes:", len(robot.links_3d))
 print("Expected graphical meshes: 7")
 print("RS007N full purple mesh model loaded.")
 
+
+
+# ============================================================
+# TEST J1 MOVEMENT
+# ============================================================
+
+# Start at zero
+robot.q = [0, 0, 0, 0, 0, 0]
+env.step(1.0)
+
+print("Moving J1...")
+
+
+# Create a slow trajectory:
+# J1 goes from 0 degrees to 45 degrees
+q_start = [0, 0, 0, 0, 0, 0]
+
+q_end = [
+    45 * pi / 180,   # J1 = 45 degrees
+    0,
+    0,
+    0,
+    0,
+    0
+]
+
+
+trajectory = rtb.jtraj(q_start, q_end, 100)
+
+
+# Animate it slowly
+for q in trajectory.q:
+    robot.q = q
+    env.step(0.03)
+
+
+print("J1 movement finished.")
 
 env.hold()
