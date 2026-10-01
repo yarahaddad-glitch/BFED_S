@@ -53,7 +53,6 @@ hannahbot.q = np.zeros(6)
 
 env = swift.Swift()
 env.launch(realtime=True)
-#env.add(base_mesh)
 for mesh in meshes:
     env.add(mesh)
 
