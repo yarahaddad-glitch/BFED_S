@@ -1,21 +1,31 @@
 import swift
+from spatialgeometry import Mesh
+from spatialmath import SE3
+import keyboard
+import time
 
-from YaraBot_DH import YaraBot
-
-
-# Create Swift environment
+#start swift simulator
 env = swift.Swift()
 env.launch(realtime=True, browser=None)
 
+#load the robot mesh files:
+Base = Mesh(filename= "Yara_Work/EC66_Mesh/EC66Base.dae")
+Joint1 = Mesh(filename= "Yara_Work/EC66_Mesh/EC66J1.dae")
+Joint2 = Mesh(filename= "Yara_Work/EC66_Mesh/EC66J2.dae")
+Joint3 = Mesh(filename= "Yara_Work/EC66_Mesh/EC66J3.dae")
+Joint4 = Mesh(filename= "Yara_Work/EC66_Mesh/EC66J4.dae")
+Joint5 = Mesh(filename= "Yara_Work/EC66_Mesh/EC66J5.dae")
+Joint6 = Mesh(filename= "Yara_Work/EC66_Mesh/EC66J6.dae")
 
-# Create my EC66 robot
-robot = YaraBot()
-
-
-# Add robot to Swift
-robot.add_to_env(env)
-
+#add the mesh files to swift:
+env.add(Base)
+env.add(Joint1)
+env.add(Joint2)
+env.add(Joint3)
+env.add(Joint4)
+env.add(Joint5)
+env.add(Joint6)
 
 env.step()
 
-input("Press Enter to close")
+input("press enter to end")
