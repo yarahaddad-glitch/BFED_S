@@ -6,7 +6,7 @@ import roboticstoolbox as rtb
 from ir_support.robots.UTSMeshRobot import UTSMeshRobot
 
 
-class RS007N(UTSMeshRobot):
+class MaryamBot(UTSMeshRobot):
     """
     Kawasaki RS007N 6-DOF industrial robot.
 
