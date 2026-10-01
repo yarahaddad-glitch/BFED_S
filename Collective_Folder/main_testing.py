@@ -7,12 +7,12 @@ from spatialmath import SE3
 
 sys.path.append(str(Path(__file__).parent.parent))
 from Hannah_Work.Class_HannahBot import HannahBot
-from Maryam_Work.Maryam_robotclass import RS007N
+from Maryam_Work.Maryam_robotclass import MaryamBot
 
 hannahbot = HannahBot()
 hannahbot.base = SE3(2, 0, 0)
 
-maryambot = RS007N()
+maryambot = MaryamBot()
 maryambot.base = SE3(3, 0, 0)
 
 env = swift.Swift()
