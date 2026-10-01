@@ -3,18 +3,12 @@ import swift
 from YaraBot_DH import YaraBot
 
 
-# Create Swift environment
 env = swift.Swift()
 env.launch(realtime=True, browser=None)
 
-
-# Create my EC66 robot
 robot = YaraBot()
 
-
-# Add robot to Swift
 robot.add_to_env(env)
-
 
 env.step()
 
