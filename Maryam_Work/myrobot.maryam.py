@@ -3,14 +3,14 @@ from math import pi
 import roboticstoolbox as rtb
 import swift
 
-from Maryam_robotclass import RS007N
+from Maryam_robotclass import MaryamBot
 
 
 # ============================================================
 # CREATE ROBOT
 # ============================================================
 
-robot = RS007N()
+robot = MaryamBot()
 
 
 # ============================================================
