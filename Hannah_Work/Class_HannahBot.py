@@ -38,18 +38,21 @@ class HannahBot(DHRobot):
 #link positions
     def get_link_transforms(self, q):
         transforms = []
-        T = SE3()
+        T = self.base
         for i, link in enumerate(self.links):
             T = T * link.A(q[i])
             transforms.append(T)
         return transforms
+    
     def update_meshes(self):
         T_current = self.get_link_transforms(self.q)
+        self.base_mesh.T = self.base.A  # Update the base mesh transform
         for i, link_mesh in enumerate(self.link_meshes):
             T_change = T_current[i] * self.T_zero[i].inv()  # Calculate the change in transform
             link_mesh.T = T_change.A  # Update the mesh transform
 
     def add_to_env(self, env):
+        self.update_meshes()
         env.add(self.base_mesh)
         for mesh in self.link_meshes:
             env.add(mesh)
