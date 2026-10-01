@@ -1,0 +1,4 @@
+from ir_support.robots.UTSMeshRobot import UTSMeshRobot
+import inspect
+
+print(inspect.getfile(UTSMeshRobot))
