@@ -19,7 +19,7 @@ class YaraBot(UTSMeshRobot):
                          mesh_stem = "EC66",
                          mesh_dir = mesh_directory,
                          name = "YaraBot",
-                         home_q = [0, 0, 0, 0, 0, 0],
+                         home_q = [0, -pi/2, 0, 0, 0, 0],
                          base=base,
                          meshes_are_global_at_home=True,
                         )
@@ -28,7 +28,7 @@ class YaraBot(UTSMeshRobot):
 
         return[
         rtb.RevoluteDH(d=0.096, a=0, alpha= -pi/2),
-        rtb.RevoluteDH(d=0, a=0.418, alpha= 0),
+        rtb.RevoluteDH(d=0, a=0.4056, alpha= 0),
         rtb.RevoluteDH(d=0, a=0.398, alpha= 0),
         rtb.RevoluteDH(d=0.122, a=0, alpha= -pi/2),
         rtb.RevoluteDH(d=0.098, a=0, alpha= -pi/2),
