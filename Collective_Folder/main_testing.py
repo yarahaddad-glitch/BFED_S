@@ -32,15 +32,23 @@ yarabot.add_to_env(env)
 
 assignment_folder = Path(__file__).resolve().parent.parent
 
-meal_file = assignment_folder / "Yara_Work" / "EnviroParts" / "meal_area.dae"
+enviro_folder = assignment_folder / "Yara_Work" / "EnviroParts"
 
-print("Kitchen exists:", meal_file.exists())
+meal_file = enviro_folder / "meal_area.dae"
+dining_file = enviro_folder / "Dining_area.dae"
+extra_file = enviro_folder / "extra_area.dae"
 
 meal = Mesh(str(meal_file))
+dining = Mesh(str(dining_file))
+extra = Mesh(str(extra_file))
 
 # Position kitchen at origin
 meal.T = SE3(0, 0, 0).A
+dining.T = SE3(0, 0, 0).A
+extra.T = SE3(0, 0, 0).A
 
 env.add(meal)
+env.add(dining)
+env.add(extra)
 
 env.hold()
