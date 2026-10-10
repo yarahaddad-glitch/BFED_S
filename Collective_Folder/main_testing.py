@@ -3,6 +3,7 @@ import swift
 import sys
 from pathlib import Path
 from spatialmath import SE3
+from spatialgeometry import Mesh
 
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -28,5 +29,18 @@ hannahbot.add_to_env(env)
 maryambot.add_to_env(env)
 yarabot.add_to_env(env)
 
+
+assignment_folder = Path(__file__).resolve().parent.parent
+
+meal_file = assignment_folder / "Yara_Work" / "EnviroParts" / "meal_area.dae"
+
+print("Kitchen exists:", meal_file.exists())
+
+meal = Mesh(str(meal_file))
+
+# Position kitchen at origin
+meal.T = SE3(0, 0, 0).A
+
+env.add(meal)
 
 env.hold()
