@@ -5,8 +5,8 @@
       <author>Blender User</author>
       <authoring_tool>Blender 4.0.0 commit date:2023-11-13, commit time:17:26, hash:878f71061b8e</authoring_tool>
     </contributor>
-    <created>2026-10-10T21:57:30</created>
-    <modified>2026-10-10T21:57:30</modified>
+    <created>2026-10-12T16:13:48</created>
+    <modified>2026-10-12T16:13:48</modified>
     <unit name="meter" meter="1"/>
     <up_axis>Z_UP</up_axis>
   </asset>
@@ -125,7 +125,7 @@
         </technique>
       </profile_COMMON>
     </effect>
-    <effect id="Material_006-effect">
+    <effect id="Bar-effect">
       <profile_COMMON>
         <technique sid="common">
           <lambert>
@@ -133,7 +133,7 @@
               <color sid="emission">0 0 0 1</color>
             </emission>
             <diffuse>
-              <color sid="diffuse">0.1763794 0.1691787 0.1745651 1</color>
+              <color sid="diffuse">0.4896445 0.4686176 0.4844611 1</color>
             </diffuse>
             <reflectivity>
               <float sid="specular">0.5045872</float>
@@ -166,8 +166,8 @@
     <material id="Material_005-material" name="Material.005">
       <instance_effect url="#Material_005-effect"/>
     </material>
-    <material id="Material_006-material" name="Material.006">
-      <instance_effect url="#Material_006-effect"/>
+    <material id="Bar-material" name="Bar">
+      <instance_effect url="#Bar-effect"/>
     </material>
   </library_materials>
   <library_geometries>
@@ -499,7 +499,7 @@
         <vertices id="Cylinder_067-mesh-vertices">
           <input semantic="POSITION" source="#Cylinder_067-mesh-positions"/>
         </vertices>
-        <triangles material="Material_006-material" count="744">
+        <triangles material="Bar-material" count="744">
           <input semantic="VERTEX" source="#Cylinder_067-mesh-vertices" offset="0"/>
           <input semantic="NORMAL" source="#Cylinder_067-mesh-normals" offset="1"/>
           <input semantic="TEXCOORD" source="#Cylinder_067-mesh-map-0" offset="2" set="0"/>
@@ -541,7 +541,7 @@
         <vertices id="Cylinder_035-mesh-vertices">
           <input semantic="POSITION" source="#Cylinder_035-mesh-positions"/>
         </vertices>
-        <triangles material="Material_006-material" count="4340">
+        <triangles material="Bar-material" count="4340">
           <input semantic="VERTEX" source="#Cylinder_035-mesh-vertices" offset="0"/>
           <input semantic="NORMAL" source="#Cylinder_035-mesh-normals" offset="1"/>
           <input semantic="TEXCOORD" source="#Cylinder_035-mesh-map-0" offset="2" set="0"/>
@@ -583,7 +583,7 @@
         <vertices id="Cylinder_034-mesh-vertices">
           <input semantic="POSITION" source="#Cylinder_034-mesh-positions"/>
         </vertices>
-        <triangles material="Material_006-material" count="868">
+        <triangles material="Bar-material" count="868">
           <input semantic="VERTEX" source="#Cylinder_034-mesh-vertices" offset="0"/>
           <input semantic="NORMAL" source="#Cylinder_034-mesh-normals" offset="1"/>
           <input semantic="TEXCOORD" source="#Cylinder_034-mesh-map-0" offset="2" set="0"/>
@@ -595,7 +595,7 @@
   <library_visual_scenes>
     <visual_scene id="Scene" name="Scene">
       <node id="wall2_002" name="wall2.002" type="NODE">
-        <matrix sid="transform">-0.03244753 -5.96816e-4 0 2.178517 4.03254e-5 -0.4802227 0 2.649309 0 0 0.5595584 2.55189 0 0 0 1</matrix>
+        <matrix sid="transform">-0.03244753 -5.96816e-4 0 9.38772 4.03254e-5 -0.4802227 0 2.649309 0 0 0.5595584 2.55189 0 0 0 1</matrix>
         <instance_geometry url="#Cube_013-mesh" name="wall2.002">
           <bind_material>
             <technique_common>
@@ -607,7 +607,7 @@
         </instance_geometry>
       </node>
       <node id="wall2_001" name="wall2.001" type="NODE">
-        <matrix sid="transform">-0.03134195 -5.96816e-4 0 2.176241 3.89514e-5 -0.4802227 0 1.708508 0 0 1.552735 1.558714 0 0 0 1</matrix>
+        <matrix sid="transform">-0.03134195 -5.96816e-4 0 9.385445 3.89514e-5 -0.4802227 0 1.708508 0 0 1.552735 1.558714 0 0 0 1</matrix>
         <instance_geometry url="#Cube_012-mesh" name="wall2.001">
           <bind_material>
             <technique_common>
@@ -619,7 +619,7 @@
         </instance_geometry>
       </node>
       <node id="wall2" name="wall2" type="NODE">
-        <matrix sid="transform">-0.03287923 -4.21635e-4 0 2.179957 4.0862e-5 -0.3392649 0 3.461319 0 0 1.552735 1.558714 0 0 0 1</matrix>
+        <matrix sid="transform">-0.03287923 -4.21635e-4 0 9.38916 4.0862e-5 -0.3392649 0 3.461319 0 0 1.552735 1.558714 0 0 0 1</matrix>
         <instance_geometry url="#Cube_003-mesh" name="wall2">
           <bind_material>
             <technique_common>
@@ -631,7 +631,7 @@
         </instance_geometry>
       </node>
       <node id="wall1" name="wall1" type="NODE">
-        <matrix sid="transform">4.52532e-5 -2.404017 0 4.585953 0.0364113 0.002987792 0 1.263961 0 0 1.552735 1.558714 0 0 0 1</matrix>
+        <matrix sid="transform">4.52532e-5 -2.404017 0 11.79516 0.0364113 0.002987792 0 1.263961 0 0 1.552735 1.558714 0 0 0 1</matrix>
         <instance_geometry url="#Cube_001-mesh" name="wall1">
           <bind_material>
             <technique_common>
@@ -643,7 +643,7 @@
         </instance_geometry>
       </node>
       <node id="kit" name="kit" type="NODE">
-        <matrix sid="transform">-9.99999e-4 5.4324e-14 8.34925e-7 6.895115 1.24279e-6 4.37114e-11 6.71815e-4 1.295048 0 0.001 -2.9366e-11 0 0 0 0 1</matrix>
+        <matrix sid="transform">-9.99999e-4 5.4324e-14 8.34925e-7 14.10432 1.24279e-6 4.37114e-11 6.71815e-4 1.295048 0 0.001 -2.9366e-11 0 0 0 0 1</matrix>
         <instance_geometry url="#kit-mesh" name="kit">
           <bind_material>
             <technique_common>
@@ -657,7 +657,7 @@
         </instance_geometry>
       </node>
       <node id="Cube_006" name="Cube.006" type="NODE">
-        <matrix sid="transform">1.07323e-4 -2.404017 0 4.589005 0.08635353 0.002987792 0 3.719191 0 0 0.72118 2.386455 0 0 0 1</matrix>
+        <matrix sid="transform">1.07323e-4 -2.404017 0 11.79821 0.08635353 0.002987792 0 5.307938 0 0 0.72118 2.386455 0 0 0 1</matrix>
         <instance_geometry url="#Cube_008-mesh" name="Cube.006">
           <bind_material>
             <technique_common>
@@ -669,7 +669,7 @@
         </instance_geometry>
       </node>
       <node id="counter" name="counter" type="NODE">
-        <matrix sid="transform">0.001044936 9.3111e-7 0 2.189809 -1.29873e-6 7.49157e-4 0 3.204686 0 0 5.03371e-4 0.00731957 0 0 0 1</matrix>
+        <matrix sid="transform">0.001044936 1.03892e-6 0 9.399013 -1.29873e-6 8.35903e-4 0 4.74081 0 0 5.03371e-4 0.00731957 0 0 0 1</matrix>
         <instance_geometry url="#test_002-mesh" name="counter">
           <bind_material>
             <technique_common>
@@ -679,11 +679,11 @@
         </instance_geometry>
       </node>
       <node id="Cylinder_048" name="Cylinder.048" type="NODE">
-        <matrix sid="transform">4.21111e-5 -0.03516478 0 6.344041 0.03388317 4.3704e-5 0 3.732254 0 0 0.09371844 0.5880927 0 0 0 1</matrix>
+        <matrix sid="transform">4.21111e-5 -0.03516478 0 13.55324 0.03388317 4.3704e-5 0 5.321001 0 0 0.09371844 0.5880927 0 0 0 1</matrix>
         <instance_geometry url="#Cylinder_067-mesh" name="Cylinder.048">
           <bind_material>
             <technique_common>
-              <instance_material symbol="Material_006-material" target="#Material_006-material">
+              <instance_material symbol="Bar-material" target="#Bar-material">
                 <bind_vertex_input semantic="UVMap" input_semantic="TEXCOORD" input_set="0"/>
               </instance_material>
             </technique_common>
@@ -691,14 +691,14 @@
         </instance_geometry>
       </node>
       <node id="Cylinder_035" name="Cylinder.035" type="NODE">
-        <matrix sid="transform">4.21111e-5 -0.03516478 0 3.329411 0.03388317 4.3704e-5 0 3.736001 0 0 0.5992538 1.058292 0 0 0 1</matrix>
+        <matrix sid="transform">4.21111e-5 -0.03516478 0 10.53861 0.03388317 4.3704e-5 0 5.324748 0 0 0.5992538 1.058292 0 0 0 1</matrix>
         <instance_geometry url="#Cylinder_035-mesh" name="Cylinder.035">
           <bind_material>
             <technique_common>
               <instance_material symbol="Material_001-material" target="#Material_001-material">
                 <bind_vertex_input semantic="UVMap" input_semantic="TEXCOORD" input_set="0"/>
               </instance_material>
-              <instance_material symbol="Material_006-material" target="#Material_006-material">
+              <instance_material symbol="Bar-material" target="#Bar-material">
                 <bind_vertex_input semantic="UVMap" input_semantic="TEXCOORD" input_set="0"/>
               </instance_material>
             </technique_common>
@@ -706,11 +706,11 @@
         </instance_geometry>
       </node>
       <node id="Cylinder_034" name="Cylinder.034" type="NODE">
-        <matrix sid="transform">3.79172e-5 -0.03516478 0 2.584416 0.03050868 4.3704e-5 0 3.740301 0 0 0.539573 1.117973 0 0 0 1</matrix>
+        <matrix sid="transform">3.79172e-5 -0.03516478 0 9.793619 0.03050868 4.3704e-5 0 5.329048 0 0 0.539573 1.117973 0 0 0 1</matrix>
         <instance_geometry url="#Cylinder_034-mesh" name="Cylinder.034">
           <bind_material>
             <technique_common>
-              <instance_material symbol="Material_006-material" target="#Material_006-material">
+              <instance_material symbol="Bar-material" target="#Bar-material">
                 <bind_vertex_input semantic="UVMap" input_semantic="TEXCOORD" input_set="0"/>
               </instance_material>
             </technique_common>
