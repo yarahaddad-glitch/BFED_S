@@ -46,19 +46,16 @@ def create_environment():
     tray_file = os.path.join(
     yara_folder,
     "EnviroParts",
-    "Tray1.dae"
+    "Tray.dae"
     )
 
     yara_folder = os.path.join(assignment_folder, "Yara_Work")
-
-    meal_file = os.path.join(yara_folder, "EnviroParts", "meal_area.dae")
 
     print("Prisoner exists:", os.path.exists(prisoner_file))
     print("groot exists:", os.path.exists(groot_file))
     print("drex exists:", os.path.exists(drex_file))
     print("solitary cage exists:", os.path.exists(solitary_file))
     print("Tray exists:", os.path.exists(tray_file))
-    print("Meal area axists:", os.path.exists(meal_file))
 
     prisoner = Mesh(
         prisoner_file,
@@ -105,12 +102,6 @@ def create_environment():
     tray.T = SE3(0.3, 0.5, 0.1).A
 
     env.add(tray)
-
-    meal = Mesh(meal_file)
-
-    meal.T = SE3(0, 0 , 0).A
-
-    env.add(meal)
 
     return env
 
