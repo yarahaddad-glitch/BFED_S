@@ -34,10 +34,15 @@ assignment_folder = Path(__file__).resolve().parent.parent
 
 enviro_folder = assignment_folder / "Yara_Work" / "EnviroParts"
 
-meal_file = enviro_folder / "Meal_area.dae"
-dining_file = enviro_folder / "Dining_area.dae"
-extra_file = enviro_folder / "Extra_area.dae"
+meal_file = enviro_folder / "meal_Area_Two.dae"
+dining_file = enviro_folder / "dining_Area_Two.dae"
+extra_file = enviro_folder / "extra_Area_Two.dae"
 isolation_file = enviro_folder / "Isolation_area.dae"
+
+print("Meal exists:", meal_file.exists())
+print("Dining exists:", dining_file.exists())
+print("Extra exists:", extra_file.exists())
+print("Isolation exists:", isolation_file.exists())
 
 meal = Mesh(str(meal_file))
 dining = Mesh(str(dining_file))
@@ -48,7 +53,7 @@ isolation = Mesh(str(isolation_file))
 meal.T = SE3(0, 0, 0).A
 dining.T = SE3(0, 0, 0).A
 extra.T = SE3(0, 0, 0).A
-isolation = SE3(0, 0, 0).A
+isolation.T = SE3(0, 0, 0).A
 
 env.add(meal)
 env.add(dining)
