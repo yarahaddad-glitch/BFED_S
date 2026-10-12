@@ -34,21 +34,25 @@ assignment_folder = Path(__file__).resolve().parent.parent
 
 enviro_folder = assignment_folder / "Yara_Work" / "EnviroParts"
 
-meal_file = enviro_folder / "meal_area.dae"
+meal_file = enviro_folder / "Meal_area.dae"
 dining_file = enviro_folder / "Dining_area.dae"
-extra_file = enviro_folder / "extra_area.dae"
+extra_file = enviro_folder / "Extra_area.dae"
+isolation_file = enviro_folder / "Isolation_area.dae"
 
 meal = Mesh(str(meal_file))
 dining = Mesh(str(dining_file))
 extra = Mesh(str(extra_file))
+isolation = Mesh(str(isolation_file))
 
 # Position kitchen at origin
 meal.T = SE3(0, 0, 0).A
 dining.T = SE3(0, 0, 0).A
 extra.T = SE3(0, 0, 0).A
+isolation = SE3(0, 0, 0).A
 
 env.add(meal)
 env.add(dining)
 env.add(extra)
+env.add(isolation)
 
 env.hold()
