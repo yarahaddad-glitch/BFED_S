@@ -1,0 +1,81 @@
+
+import numpy as np
+import swift
+
+from Rebot_class import ReBot
+
+
+# ==================================================
+# 1. START SWIFT
+# ==================================================
+
+env = swift.Swift()
+env.launch(realtime=True)
+
+robot = ReBot(env)
+
+
+# ==================================================
+# 2. MOVE ROBOT JOINTS
+# ==================================================
+
+q_start = robot.q
+
+q_target = np.deg2rad([
+    30,
+    -60,
+    -45,
+    20,
+    30,
+    45
+])
+
+# Smooth joint movement
+for s in np.linspace(0, 1, 60):
+
+    blend = 3*s**2 - 2*s**3
+
+    robot.q = q_start + blend * (q_target - q_start)
+
+    env.step(0.03)
+
+
+# ==================================================
+# 3. OPEN GRIPPER
+# ==================================================
+
+for opening in np.linspace(0, 0.05, 60):
+
+    robot.gripper_opening = opening
+    env.step(0.03)
+
+
+# ==================================================
+# 4. CLOSE GRIPPER
+# ==================================================
+
+for opening in np.linspace(0.05, 0, 60):
+
+    robot.gripper_opening = opening
+    env.step(0.03)
+
+
+# ==================================================
+# 5. RETURN HOME
+# ==================================================
+
+q_start = robot.q
+
+for s in np.linspace(0, 1, 60):
+
+    blend = 3*s**2 - 2*s**3
+
+    robot.q = (
+        q_start
+        + blend * (robot.q_home - q_start)
+    )
+
+    env.step(0.03)
+
+
+env.hold()

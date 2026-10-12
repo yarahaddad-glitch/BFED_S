@@ -31,7 +31,7 @@ link6_mesh = Mesh(str(link6_path), pose=SE3())
 link7_path = A_path / "IR_ReBot_gripper_base.STL"
 link7_mesh = Mesh(str(link7_path), pose=SE3())
 
-link8_path = A_path / "IR_ReBot_right_finger.STL"
+link8_path = A_path / "IR_ReBot_right_finger_changed.STL"
 link8_mesh = Mesh(str(link8_path), pose=SE3())
 
 link9_path = A_path / "IR_ReBot_left_finger.STL"
