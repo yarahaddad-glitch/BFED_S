@@ -11,7 +11,10 @@ class YaraBot(UTSMeshRobot):
         links = self._create_DH()
 
         #folder containing the DAE mesh files 
-        mesh_directory = os.path.join(os.path.abspath(os.path.dirname(__file__)), "EC66_Mesh")
+        mesh_directory = os.path.join(os.path.abspath(os.path.dirname(__file__)), "EC66_new_Mesh")
+
+        print("Mesh directory:", mesh_directory)
+        print("Mesh files:", os.listdir(mesh_directory))
 
         #intitialisng the utsMeshRobot 
 
@@ -19,7 +22,7 @@ class YaraBot(UTSMeshRobot):
                          mesh_stem = "EC66",
                          mesh_dir = mesh_directory,
                          name = "YaraBot",
-                         home_q = [0, -pi/2, 0, 0, 0, 0],
+                         home_q = [0, -pi/2, 0, -pi/2, -pi, 0],
                          base=base,
                          meshes_are_global_at_home=True,
                         )
