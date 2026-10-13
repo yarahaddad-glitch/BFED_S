@@ -1,10 +1,7 @@
 from math import pi
 import os
-
 import roboticstoolbox as rtb
-
 from ir_support.robots.UTSMeshRobot import UTSMeshRobot
-
 
 class MaryamBot(UTSMeshRobot):
     """
