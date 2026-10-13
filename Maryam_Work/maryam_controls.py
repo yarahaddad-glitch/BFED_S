@@ -2,14 +2,19 @@
 from pathlib import Path
 import numpy as np
 import swift
-from spatialgeometry import Cuboid, Sphere
+from spatialgeometry import Cuboid, Sphere, Mesh
 from spatialmath import SE3
 from Maryam_robotclass import MaryamBot
 from maryamrobot_controller import RobotController
 
+
+
 root = Path(__file__).resolve().parent
 robot = MaryamBot()
 robot.q = np.deg2rad([0, -45, 60, 0, 45, 0])
+
+root = Path(__file__).resolve().parent
+tray_path = root.parent / "Yara_Work" / "EnviroParts" / "Tray.dae"
 
 files = [root / f"RS007N-J{i}.STL" for i in range(1, 7)]
 
@@ -23,6 +28,17 @@ env = swift.Swift()
 env.launch(realtime=True)
 for mesh in robot.links_3d:
     env.add(mesh)
+
+# Load tray mesh from teammate's folder
+tray_path = root.parent / "Yara_Work" / "EnviroParts" / "Tray.dae"
+
+tray = Mesh(
+    filename=str(tray_path),
+    pose=SE3(0.5, 0.2, 0.3),
+    scale=[1, 1, 1]
+)
+
+env.add(tray)
 
 # Show the registered obstacle in Swift (previous version omitted this).
 red_sphere = Sphere(radius=0.04, pose=SE3(*obstacle_xyz),

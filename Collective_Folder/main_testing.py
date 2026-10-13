@@ -16,7 +16,7 @@ hannahbot = HannahBot()
 hannahbot.base = SE3(2, 0, 0)
 
 maryambot = MaryamBot()
-maryambot.base = SE3(3, 0, 0)
+maryambot.base = SE3(13.86, 4.8, 0.51)* SE3.Rz(np.pi/2).A
 
 # Yara's EC66 robot:
 yarabot = YaraBot()
@@ -39,6 +39,7 @@ enviro_folder = assignment_folder / "Yara_Work" / "EnviroParts"
 #extra_file = enviro_folder / "extra_Area_Two.dae"
 isolation_file = enviro_folder / "Isolation_area.dae"
 testM_file = enviro_folder / "meal_test.dae"
+tray_file = enviro_folder / "Tray.dae"  
 
 
 # meal = Mesh(str(meal_file))
@@ -60,4 +61,13 @@ testMeal.T = SE3(0, 0, 0).A
 env.add(isolation)
 env.add(testMeal)
 
-env.hold()
+
+
+# Load yellow tray 
+
+yellow_tray = Mesh(
+    filename=str(tray_file),
+)
+
+yellow_tray.T = SE3(13.3, 4.7, 0.51).A
+env.add(yellow_tray)
