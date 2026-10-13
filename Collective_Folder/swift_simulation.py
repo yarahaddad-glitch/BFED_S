@@ -46,7 +46,7 @@ def create_environment():
     tray_file = os.path.join(
     yara_folder,
     "EnviroParts",
-    "Tray.dae"
+    "tray_blue.dae"
     )
 
     yara_folder = os.path.join(assignment_folder, "Yara_Work")
