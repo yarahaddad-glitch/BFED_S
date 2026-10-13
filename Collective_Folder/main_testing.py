@@ -34,30 +34,30 @@ assignment_folder = Path(__file__).resolve().parent.parent
 
 enviro_folder = assignment_folder / "Yara_Work" / "EnviroParts"
 
-meal_file = enviro_folder / "meal_Area_Two.dae"
-dining_file = enviro_folder / "dining_Area_Two.dae"
-extra_file = enviro_folder / "extra_Area_Two.dae"
+#meal_file = enviro_folder / "meal_Area_Two.dae"
+#dining_file = enviro_folder / "dining_Area_Two.dae"
+#extra_file = enviro_folder / "extra_Area_Two.dae"
 isolation_file = enviro_folder / "Isolation_area.dae"
+testM_file = enviro_folder / "meal_test.dae"
 
-print("Meal exists:", meal_file.exists())
-print("Dining exists:", dining_file.exists())
-print("Extra exists:", extra_file.exists())
-print("Isolation exists:", isolation_file.exists())
 
-meal = Mesh(str(meal_file))
-dining = Mesh(str(dining_file))
-extra = Mesh(str(extra_file))
+# meal = Mesh(str(meal_file))
+# dining = Mesh(str(dining_file))
+# extra = Mesh(str(extra_file))
 isolation = Mesh(str(isolation_file))
+testMeal = Mesh(str(testM_file))
 
 # Position kitchen at origin
-meal.T = SE3(0, 0, 0).A
-dining.T = SE3(0, 0, 0).A
-extra.T = SE3(0, 0, 0).A
+# meal.T = SE3(0, 0, 0).A
+# dining.T = SE3(0, 0, 0).A
+# extra.T = SE3(0, 0, 0).A
 isolation.T = SE3(0, 0, 0).A
+testMeal.T = SE3(0, 0, 0).A
 
-env.add(meal)
-env.add(dining)
-env.add(extra)
+# env.add(meal)
+# env.add(dining)
+# env.add(extra)
 env.add(isolation)
+env.add(testMeal)
 
 env.hold()
