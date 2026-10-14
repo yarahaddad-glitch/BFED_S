@@ -1,66 +1,95 @@
 
-import os
+import numpy as np
 import swift
-from spatialgeometry import Mesh
+import sys
+from pathlib import Path
 from spatialmath import SE3
-from math import pi
+from spatialgeometry import Mesh
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+from Hannah_Work.Class_HannahBot import HannahBot
+from Maryam_Work.Maryam_robotclass import MaryamBot
+from Yara_Work.YaraBot_DH import YaraBot
+from swift_simulation import create_environment
+from Maryam_Work.maryam_colour_camera import detect_tray_colour
+from Maryam_Work.maryamrobot_controller import RobotController
+# Create ONE Swift simulation
+env = swift.Swift()
+env.launch(realtime=True)
+# Load Groot, prisoner, Drex, cage and ONE green tray
+groot, green_tray = create_environment(env)
+# Hannah's robot
+hannahbot = HannahBot()
+hannahbot.base = SE3(2, 0, 0)
+hannahbot.add_to_env(env)
+# Maryam's Kawasaki
+maryambot = MaryamBot()
+maryambot.base = SE3(13.86, 4.8, 0.51) * SE3.Rz(np.pi / 2)
+maryambot.add_to_env(env)
+# Yara's robot
+yarabot = YaraBot()
+yarabot.base = SE3(4, 0, 0)
+yarabot.add_to_env(env)
+# Load kitchen environment
+assignment_folder = Path(__file__).resolve().parent.parent
+enviro_folder = assignment_folder / "Yara_Work" / "EnviroParts"
+isolation = Mesh(str(enviro_folder / "Isolation_area.dae"))
+testMeal = Mesh(str(enviro_folder / "meal_test.dae"))
+isolation.T = SE3(0, 0, 0).A
+testMeal.T = SE3(0, 0, 0).A
+env.add(isolation)
+env.add(testMeal)
 
-def create_environment(env):  # Use the Swift environment from main_testing.py
+# Set up Kawasaki RMRC and STL collision geometry
+robot_files = [
+    assignment_folder / "Maryam_Work" / f"RS007N-J{i}.STL"
+    for i in range(1, 7)
+]
+controller = RobotController(
+    maryambot,
+    robot_files,
+    obstacles=[],  # Add the workcell's actual collision obstacles
+    stl_scale=1.0
+)
+# Open laptop webcam and identify colour
+colour = detect_tray_colour()
+if colour == "GREEN":
+    print("GREEN GROOT DETECTED!")
+    print("Kawasaki selecting the green tray")
+    # Get tray position in world coordinates
+    tray_xyz = np.asarray(green_tray.T[:3, 3], dtype=float)
+    # Temporary pickup positions: adjust to the actual tray geometry
+    above = tray_xyz + np.array([0.0, 0.0, 0.18])
+    grasp = tray_xyz + np.array([0.0, 0.0, 0.05])
+    lift = above.copy()
+    attached = False
+    relative_tray = None
+    def step():
+        # Move the tray with the end effector after grasping
+        if attached:
+            green_tray.T = (maryambot.fkine(maryambot.q) * relative_tray).A
+        env.step(controller.dt)
+    # Approach the tray
+    if controller.move(above, step_callback=step):
+        print("Above tray")
+        # Lower toward the tray
+        if controller.move(grasp, step_callback=step):
+            print("Grasp position reached")
+            # Simulate gripping the tray
+            relative_tray = maryambot.fkine(maryambot.q).inv() * SE3(green_tray.T)
+            attached = True
+            # Lift the tray using RMRC
+            if controller.move(lift, step_callback=step):
+                print("GREEN TRAY LIFTED!")
+            else:
+                print("Lift failed - holding current position")
+        else:
+            print("Could not reach grasp position")
+    else:
+        print("Could not reach the tray")
+elif colour is None:
+    print("Camera cancelled - no robot movement")
+else:
+    print(f"Detected {colour}, waiting for GREEN")
 
-    collective_folder = os.path.dirname(os.path.abspath(__file__))
-    assignment_folder = os.path.dirname(collective_folder)
-
-    maryam_folder = os.path.join(assignment_folder, "Maryam_Work")
-    yara_folder = os.path.join(assignment_folder, "Yara_Work", "EnviroParts")
-
-    # Mesh file locations
-    prisoner_file = os.path.join(maryam_folder, "prisoner.stl")
-    groot_file = os.path.join(maryam_folder, "groot.stl")
-    drex_file = os.path.join(maryam_folder, "drex.stl")
-    solitary_file = os.path.join(maryam_folder, "solitary.stl")
-    green_tray_file = os.path.join(yara_folder, "tray_green.dae")
-
-    # Check that all mesh files exist
-    print("Prisoner exists:", os.path.exists(prisoner_file))
-    print("Groot exists:", os.path.exists(groot_file))
-    print("Drex exists:", os.path.exists(drex_file))
-    print("Solitary cage exists:", os.path.exists(solitary_file))
-    print("Green tray exists:", os.path.exists(green_tray_file))
-
-    # Prisoner
-    prisoner = Mesh(prisoner_file, color=(0.8, 0.35, 0.05, 1.0))
-    prisoner.T = (SE3(1.16, 0.14, 0.02) * SE3.Rz(pi)).A
-    prisoner.scale = [0.5, 0.5, 0.5]
-    env.add(prisoner)
-
-    # Groot
-    groot = Mesh(groot_file, color=(0.1, 0.6, 0.2, 1.0))
-    groot.scale = [20, 20, 20]
-    groot.T = SE3(13.3, 6.0, 0.0).A
-    env.add(groot)
-
-    # Drex
-    drex = Mesh(drex_file, color=(0.0, 0.0, 0.35, 1.0))
-    drex.T = SE3(0.5, 0.1, 0.0).A
-    env.add(drex)
-
-    # Solitary cage
-    solitary = Mesh(solitary_file, color=(0.15, 0.15, 0.15, 1.0))
-    solitary.scale = [0.1, 0.1, 0.1]
-    solitary.T = SE3(1.0, 0.16, 0.0).A
-    env.add(solitary)
-
-    # One green tray beside Maryam's Kawasaki
-    green_tray = Mesh(green_tray_file)
-    green_tray.T = SE3(13.3, 4.7, 0.51).A
-    env.add(green_tray)
-
-    return groot, green_tray  # Used by main_testing.py
-
-
-if __name__ == "__main__":
-    env = swift.Swift()
-    env.launch(realtime=True)
-    create_environment(env)
-    env.hold()
+env.hold()
