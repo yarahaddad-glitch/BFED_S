@@ -44,10 +44,10 @@ for joint in range(6):
     input(f"Press Enter to rotate Joint {joint + 1} by 30 degrees...")
 
     # Gradually rotate the selected joint
-    for angle in np.linspace(0, pi/6, 40):
+    for angle in np.linspace(-pi/4, pi/4, 90):
 
         q_test = home.copy()
-        q_test[joint] += angle
+        q_test[joint] = home[joint] + angle
 
         robot.q = q_test
         env.step(0.05)

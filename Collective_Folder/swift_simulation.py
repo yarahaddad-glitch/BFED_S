@@ -21,9 +21,55 @@ def create_environment(env):  # Use the existing Swift environment from main_tes
     solitary_file = os.path.join(maryam_folder, "solitary.stl")
     green_tray_file = os.path.join(yara_folder, "tray_green.dae")
 
+<<<<<<< HEAD
     # Prisoner
     prisoner = Mesh(prisoner_file, color=(0.8, 0.35, 0.05, 1.0))
     prisoner.T = (SE3(1.16, 0.14, 0.02) * SE3.Rz(pi)).A
+=======
+    prisoner_file = os.path.join(
+        maryam_folder,
+        "prisoner.stl"
+    )
+
+    groot_file = os.path.join(
+            maryam_folder,
+            "groot.stl"
+        )
+    drex_file = os.path.join(
+            maryam_folder,
+            "drex.stl"
+        )
+    solitary_file = os.path.join(
+        maryam_folder,
+        "solitary.stl"
+    )
+
+    yara_folder = os.path.join(
+    assignment_folder,
+    "Yara_Work"
+    )
+
+    tray_file = os.path.join(
+    yara_folder,
+    "EnviroParts",
+    "tray_blue.dae" #change the colour name to try the other colours
+    )
+
+    yara_folder = os.path.join(assignment_folder, "Yara_Work")
+
+    print("Prisoner exists:", os.path.exists(prisoner_file))
+    print("groot exists:", os.path.exists(groot_file))
+    print("drex exists:", os.path.exists(drex_file))
+    print("solitary cage exists:", os.path.exists(solitary_file))
+    print("Tray exists:", os.path.exists(tray_file))
+
+    prisoner = Mesh(
+        prisoner_file,
+        color=(0.8, 0.35, 0.05, 1.0)
+    )
+
+    prisoner.T = SE3(1.16, 0.14, 0.02) * SE3.Rz(pi).A
+>>>>>>> 23a9c4732f15be5bfb60ef4f38e6d30e5ce71172
     prisoner.scale = [0.5, 0.5, 0.5]
     env.add(prisoner)
 

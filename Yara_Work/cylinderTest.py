@@ -48,7 +48,7 @@ env.launch(realtime=True, browser=None)
 
 env.add(robot)
 
-robot.q = np.array([0, -pi/2, 0, 0, 0, 0])
+robot.q = np.array([0, -pi/2, 0, -pi/2, -pi, 0])
 env.step()
 
 print("\nEC66 CYLINDER TEST")
