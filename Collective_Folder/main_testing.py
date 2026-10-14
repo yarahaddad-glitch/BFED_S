@@ -24,21 +24,32 @@ hannahbot.base = SE3(2, 0, 0)
 hannahbot.add_to_env(env)
 # Maryam's Kawasaki
 maryambot = MaryamBot()
-maryambot.base = SE3(13.86, 4.8, 0.51) * SE3.Rz(np.pi / 2)
+maryambot.base = SE3(13.86, 3.8, 0.51) * SE3.Rz(np.pi / 2)
 maryambot.add_to_env(env)
 # Yara's robot
 yarabot = YaraBot()
 yarabot.base = SE3(4, 0, 0)
 yarabot.add_to_env(env)
+
+
 # Load kitchen environment
 assignment_folder = Path(__file__).resolve().parent.parent
 enviro_folder = assignment_folder / "Yara_Work" / "EnviroParts"
-isolation = Mesh(str(enviro_folder / "Isolation_area.dae"))
-testMeal = Mesh(str(enviro_folder / "meal_test.dae"))
-isolation.T = SE3(0, 0, 0).A
-testMeal.T = SE3(0, 0, 0).A
-env.add(isolation)
-env.add(testMeal)
+
+meal_file = Mesh(str(enviro_folder / "meal_area2.dae"))
+dining_file = Mesh(str(enviro_folder / "dining_area2.dae"))
+isolation_file = Mesh(str(enviro_folder / "isolation_area2.dae"))
+nuggets_file = Mesh(str(enviro_folder / "3nuggets.dae"))
+
+isolation_file.T = SE3(0, 0, 0).A
+meal_file.T = SE3(0, 0, 0).A
+dining_file.T = SE3(0, 0, 0).A
+nuggets_file.T = SE3(0, 0, 0).A
+
+env.add(isolation_file)
+env.add(dining_file)
+env.add(meal_file)
+env.add(nuggets_file)
 
 # Set up Kawasaki RMRC and STL collision geometry
 robot_files = [
