@@ -153,7 +153,6 @@ class HannahBot(DHRobot):
         return self.base * T_motion * T_tool
 
 
-
 if __name__ == "__main__":
 
     robot = HannahBot()
