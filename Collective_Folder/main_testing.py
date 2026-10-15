@@ -13,15 +13,28 @@ from Yara_Work.YaraBot_DH import YaraBot
 from swift_simulation import create_environment
 from Maryam_Work.maryam_colour_camera import detect_tray_colour
 from Maryam_Work.maryamrobot_controller import RobotController
+
+
+# rebot and "weaterbottle"
+from spatialgeometry import Cylinder
+
+from Rebot_class import ReBot
+from rebot_bottle_demo import (
+    get_teach_positions,
+    animate_joints,
+    tool_pose
+)
+
 # Create ONE Swift simulation
 env = swift.Swift()
 env.launch(realtime=True)
 # Load Groot, prisoner, Drex, cage and ONE green tray
 groot, green_tray = create_environment(env)
+
 # Hannah's robot
 hannahbot = HannahBot()
 hannahbot.base = SE3(2, 0, 0)
-hannahbot.add_to_env(env)
+#hannahbot.add_to_env(env)
 # Maryam's Kawasaki
 maryambot = MaryamBot()
 maryambot.base = SE3(13.86, 3.8, 0.51) * SE3.Rz(np.pi / 2)

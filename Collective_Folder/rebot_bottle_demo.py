@@ -9,38 +9,32 @@ DT = 0.03
 STEPS = 80
 
 # ==================================================
-# 1. TEACH POSITIONS - ENTER YOUR RECORDED VALUES
-# Six joint angles in radians for each position
+# 1. TAUGHT POSITIONS - REPLACE VALUES WHEN RETAUGHT
+# Six arm joint angles in radians
 # ==================================================
 
 TEACH = {
-    "approach"= [],   # Gripper above the bottle
-    "pickup": None,     # Gripper positioned around the bottle
-    "lift": None,       # Bottle lifted clear of the table
-    "transfer": None,   # Safe position near collection station
-    "place": None,      # Bottle resting at collection station
-    "retreat": None     # Gripper withdrawn from bottle
+    "hover above": [0.9127, -2.2772, -0.7418, -1.6009, -0.5915, -0.0547],
+    "pickup": [1.1275, -2.1193, -0.7422, -1.4281, -0.0986, -0.0029],
+    "moving": [-1.0779, -1.0714, -0.6594, -0.5476, -0.0948, 0.0189],
+    "placing": [-2.6072, -2.0296, -0.6407, -1.4727, 0.2283, -0.0006],
+    "lifting away": [-2.6061, -1.3636, -0.9524, -0.5842, 0.0513, -0.0780],
+    "returning home": [0.6865, -1.3663, -0.9520, -0.5989, 0.0151, -0.0399]
 }
-
-# Example format for a taught position:
-# TEACH["approach"] = [0.0, -0.4, -0.6, 0.0, 0.0, 0.0]
 
 
 # ==================================================
-# 2. VALIDATE TEACH POSITIONS
+# 2. VALIDATE TAUGHT POSITIONS
 # ==================================================
 
 def get_teach_positions(robot):
     positions = {}
 
-    for name, angles in TEACH.items():
-        if angles is None:
-            raise ValueError(f"Missing taught position: {name}")
-
-        q = np.asarray(angles, dtype=float).reshape(6)
+    for name, values in TEACH.items():
+        q = np.asarray(values, dtype=float).reshape(6)
 
         if not np.all(np.isfinite(q)):
-            raise ValueError(f"Invalid values: {name}")
+            raise ValueError(f"Invalid joint values: {name}")
 
         if np.any(q < robot.qlim[0]) or np.any(q > robot.qlim[1]):
             raise ValueError(f"Joint limits exceeded: {name}")
@@ -62,40 +56,53 @@ def tool_pose(robot):
 
 
 # ==================================================
-# 4. JOINT MOVEMENT IN SWIFT
+# 4. JOINT TRAJECTORY ANIMATION
 # ==================================================
 
-def animate_joints(robot, env, target,
-                   bottle=None, attachment=None):
-
+def animate_joints(robot, env, target, bottle=None, attachment=None):
     start = robot.q.copy()
-    target = np.asarray(target, dtype=float)
+    target = np.asarray(target, dtype=float).reshape(6)
+
+    if not np.all(np.isfinite(target)):
+        raise ValueError("Invalid joint target")
+
+    if np.any(target < robot.qlim[0]) or np.any(target > robot.qlim[1]):
+        raise ValueError("Joint target exceeds limits")
 
     for u in np.linspace(0, 1, STEPS):
-        s = 3 * u**2 - 2 * u**3
+        blend = 3 * u**2 - 2 * u**3
+        robot.q = start + blend * (target - start)
 
-        robot.q = start + s * (target - start)
-
-        # Bottle follows the gripper after simulated grasp
         if bottle is not None and attachment is not None:
             bottle.T = (tool_pose(robot) * attachment).A
 
         env.step(DT)
 
 
+def operate_gripper(robot, env, action):
+    if action == "open":
+        robot.open_gripper()
+    elif action == "close":
+        robot.close_gripper()
+    else:
+        raise ValueError("Unknown gripper action")
+
+    env.step(0.1)
+    print(f"Gripper: {action}")
+
+
 # ==================================================
-# 5. WATER BOTTLE PICKUP AND PLACE
+# 5. WATER BOTTLE PICKUP AND PLACEMENT
 # ==================================================
 
 def demo():
-
     env = swift.Swift()
     env.launch(realtime=True)
 
     robot = ReBot(env)
     poses = get_teach_positions(robot)
 
-    # Position simulated bottle relative to taught pickup
+    # Place test bottle relative to the taught pickup pose
     robot.q = poses["pickup"]
     pickup_tool = tool_pose(robot)
 
@@ -107,39 +114,111 @@ def demo():
     )
 
     env.add(bottle)
-    robot.q = robot.q_home
+
+    # Start from robot home
+    robot.q = robot.q_home.copy()
     env.step(0.1)
 
-    # Move to bottle
-    robot.open_gripper()
-    animate_joints(robot, env, poses["approach"])
+    print("STARTING WATER BOTTLE SEQUENCE")
+
+    # 1. Move from home to hover above bottle
+    print("1. Moving above bottle")
+    animate_joints(robot, env, poses["hover above"])
+
+    # 2. Open gripper while above bottle
+    operate_gripper(robot, env, "open")
+
+    # 3. Lower to bottle pickup position
+    print("2. Moving around bottle")
     animate_joints(robot, env, poses["pickup"])
 
-    # Simulate gripping bottle
-    robot.close_gripper()
+    # 4. Close gripper around bottle
+    operate_gripper(robot, env, "close")
     attachment = tool_pose(robot).inv() * SE3(bottle.T)
 
-    # Lift and transport bottle
+    # 5. Lift and move with bottle attached
+    print("3. Lifting and transferring bottle")
     animate_joints(
-        robot, env, poses["lift"], bottle, attachment
-    )
-    animate_joints(
-        robot, env, poses["transfer"], bottle, attachment
-    )
-    animate_joints(
-        robot, env, poses["place"], bottle, attachment
+        robot, env, poses["moving"], bottle, attachment
     )
 
-    # Release bottle
-    robot.open_gripper()
-    env.step(0.1)
+    # 6. Lower bottle at collection position
+    print("4. Placing bottle")
+    animate_joints(
+        robot, env, poses["placing"], bottle, attachment
+    )
 
-    # Retreat without carrying the bottle
-    animate_joints(robot, env, poses["retreat"])
+    # 7. Open gripper and release bottle
+    operate_gripper(robot, env, "open")
+    print("Bottle released")
 
-    print("Simulated bottle pickup and placement complete")
+    # 8. Move away without carrying bottle
+    print("5. Lifting away")
+    animate_joints(robot, env, poses["lifting away"])
+
+    # 9. Close empty gripper
+    operate_gripper(robot, env, "close")
+
+    # 10. Move through taught return position
+    print("6. Returning home")
+    animate_joints(robot, env, poses["returning home"])
+
+    # 11. Return to home configuration
+    animate_joints(robot, env, robot.q_home)
+
+    print("WATER BOTTLE SEQUENCE COMPLETE")
+
+    # Future: repeat sequence for next water bottle
+    # demo_next_bottle()
+
     env.hold()
 
 
 if __name__ == "__main__":
     demo()
+    
+
+def run_rebot_sequence(env, robot, poses, bottle):
+    """Replay the taught bottle trajectory in the shared Swift environment."""
+
+    robot.q = robot.q_home.copy()
+    robot.open_gripper()
+    env.step(DT)
+
+    print("ReBot: Hover above bottle")
+    animate_joints(robot, env, poses["hover above"])
+
+    print("ReBot: Open gripper")
+    robot.open_gripper()
+    env.step(DT)
+
+    print("ReBot: Move to pickup")
+    animate_joints(robot, env, poses["pickup"])
+
+    print("ReBot: Close gripper")
+    robot.close_gripper()
+    env.step(DT)
+
+    attachment = tool_pose(robot).inv() * SE3(bottle.T)
+
+    print("ReBot: Lift and transfer")
+    animate_joints(robot, env, poses["moving"], bottle, attachment)
+
+    print("ReBot: Place bottle")
+    animate_joints(robot, env, poses["placing"], bottle, attachment)
+
+    print("ReBot: Release bottle")
+    robot.open_gripper()
+    env.step(DT)
+
+    print("ReBot: Lift away")
+    animate_joints(robot, env, poses["lifting away"])
+
+    robot.close_gripper()
+    env.step(DT)
+
+    print("ReBot: Return home")
+    animate_joints(robot, env, poses["returning home"])
+    animate_joints(robot, env, robot.q_home)
+
+    print("ReBot sequence complete")
