@@ -13,6 +13,7 @@ class ReBot:
         self.name = "ReBot"
         self.n = 6
         self.env = env
+        self.base = SE3()
 
         # ==================================================
         # 1. ROBOT JOINT DEFINITIONS
@@ -367,8 +368,8 @@ class ReBot:
         # ----------------------------------------------
 
         self.base_mesh.T = (
-            self.original_mesh_poses[0].A
-        )
+            self.base * self.original_mesh_poses[0]
+    ).A
 
         # ----------------------------------------------
         # Six moving links
@@ -383,7 +384,8 @@ class ReBot:
             )
 
             new_pose = (
-                movement
+                self.base
+                * movement
                 * self.original_mesh_poses[i + 1]
             )
 
@@ -403,7 +405,8 @@ class ReBot:
             )
 
             new_pose = (
-                movement
+                self.base
+                * movement
                 * self.original_mesh_poses[i + 7]
             )
 
