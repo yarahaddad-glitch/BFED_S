@@ -20,6 +20,7 @@ def create_environment(env):
     tables_folder = os.path.join(enviro_folder, "tables")
     Extra_folder = os.path.join(enviro_folder, "Extra")
     prisoners_folder = os.path.join(enviro_folder, "Prisoners")
+    Food_folder = os.path.join(enviro_folder, "food")
 
     objects = {}
 
@@ -47,6 +48,7 @@ def create_environment(env):
 
         objects[name] = mesh
 
+        print(f"Loaded: {name}")
 
         return mesh
 
@@ -216,6 +218,25 @@ def create_environment(env):
     prisoner2 = add_mesh(
         "prisoner2", prisoners_folder, "blueFoodPrisoner2.dae",
         x = 3, y=0, z=0
+    )
+
+    #Add food
+    yellowTray1 = add_mesh(
+        "yellowTray1", Food_folder, "tray_yellow.dae",
+        x= 9.27, y= 2.3, z=0.88,
+        scale = 2
+    )
+
+    yellowtray2 = add_mesh(
+        "yellowTray2", Food_folder, "tray_yellow.dae",
+        x= 9.27, y= 2.9, z=0.88,
+        scale = 2
+    )
+
+    yellowTray3 = add_mesh(
+        "yellowtray3", Food_folder, "tray_yellow.dae",
+        x= 9.27, y= 3.6, z=0.88,
+        scale = 2
     )
 
     return objects
