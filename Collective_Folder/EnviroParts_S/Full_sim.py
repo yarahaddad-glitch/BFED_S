@@ -76,7 +76,7 @@ def create_environment(env):
 
     ISO_door3 = add_mesh(
         "ISO_door3", inside_folder, "ISO_door.dae",
-        x=4.6, y=20.67, z=0
+        x=4.6, y=20.67, z=-0.34
     )
 
     # OUTSIDE ISOLATION AREA
@@ -206,17 +206,17 @@ def create_environment(env):
 
     prisoner1 = add_mesh(
         "prisoner1", prisoners_folder, "blueFoodPrisoner.dae",
-        x = 10, y=8, z = 0
+        x = 14, y=8, z = 0
         )
 
     prisoner2 = add_mesh(
         "prisoner2", prisoners_folder, "blueFoodPrisoner2.dae",
-        x = 10, y=9, z=0
+        x = 14, y=9, z=0
     )
 
     prisoner3 = add_mesh(
         "prisoner3", prisoners_folder, "GreenFoodPrisoner.dae",
-        x=10, y=10, z =0,
+        x=14, y=10, z =0,
     )
 
     #Add food

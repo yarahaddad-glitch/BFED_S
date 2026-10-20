@@ -22,7 +22,7 @@ START_BACK = 0.60       # robot lines up this far behind the working position (m
 PRE_DISTANCE = 0.19    # pre-pickup point: before the tray's near edge (m)
 PICKUP_INSET = -0.09    # pickup point: relative to the near edge (m)
 LIFT = 0.05             # how far the tray is lifted, and lowered again (m)
-LEAVE_DISTANCE = 1.20   # drive this far after turning round (m)
+LEAVE_DISTANCE = -1.20   # drive this far after turning round (m)
 first_turn = -90        # turn after leaving (deg, negative = clockwise)
 Travel_1 = 8.2          # how far to drive after first_turn, for tray 1, 2, 3 (m)
 Travel_2 = 12.7
@@ -31,6 +31,11 @@ TRAVELS = [Travel_1, Travel_2, Travel_3]
 Second_turn = 90        # turn before the last stretch (deg)
 second_travel = 1.6       # last stretch before putting the tray down (m)
 BACK_OFF = 1         # reverse this far after putting the tray down (m)
+ 
+# Collision test (only used when feed_iso gets walls=...)
+DRIVE_SIDESTEP = 0.90   # TurtleBot: how far to the side it passes a ball (m)
+DRIVE_LEADIN = 0.80     # TurtleBot: starts/ends the sidestep this far before/after it (m)
+BALL_ALONG = 0.75       # test ball: how far down the hallway (0 = start of Travel_1, 1 = end)
  
 DT = 0.02
 TOLERANCE = 0.03        # arm moves count as reached within 30 mm
@@ -63,6 +68,9 @@ def feed_iso(env, trays, **unused):
     hannahbot.q = np.deg2rad(READY_POSE_DEG)
     hannahbot.base = SE3(robot["x"], robot["y"], DECK_Z)
     hannahbot.add_to_env(env)
+    walls = unused.get("walls")
+    if walls is not None:                         # wall collision watches HannahBot
+        walls.watch_robot(hannahbot, "HannahBot")
  
     turtle = None
     if Turtlebot3Waffle is not None:
@@ -112,6 +120,26 @@ def feed_iso(env, trays, **unused):
  
     # ---------------- moves ----------------
     def drive(distance):
+        """Drive straight. If a ball is on the way, drive round it and carry on."""
+        if walls is not None and distance > 0:
+            yaw = robot["yaw"]
+            d = np.array([np.cos(yaw), np.sin(yaw)])
+            start = np.array([robot["x"], robot["y"]])
+            end = start + distance * d
+            for c, r in walls.balls:
+                rel = c[:2] - start
+                along = rel @ d                            # how far ahead the ball is
+                across = d[0] * rel[1] - d[1] * rel[0]     # how far to the side (+ = left)
+                if 0 < along < distance and abs(across) < r + 0.45:
+                    side = np.array([-d[1], d[0]]) * (-1 if across > 0 else 1)
+                    via1 = start + d * max(along - DRIVE_LEADIN, 0.3) + side * DRIVE_SIDESTEP
+                    via2 = start + d * min(along + DRIVE_LEADIN, distance) + side * DRIVE_SIDESTEP
+                    print("Ball in the hallway - driving round it")
+                    go_to(*via1)
+                    go_to(*via2)
+                    go_to(*end)
+                    face(np.rad2deg(yaw))
+                    return
         print(f"Drive {distance * 100:.0f} cm")
         x0, y0, yaw = robot["x"], robot["y"], robot["yaw"]
         for s in smooth(max(int(abs(distance) / 3 * 1.5 / DT), 2)):
@@ -211,11 +239,14 @@ def feed_iso(env, trays, **unused):
  
         # Carry it: remember each corner so the way back can retrace it
         route = []
-        turn(180)
         drive(LEAVE_DISTANCE)
+        turn(90)
         route.append((robot["x"], robot["y"]))
-        turn(first_turn)
-        drive(TRAVELS[i] if i < len(TRAVELS) else TRAVELS[-1])
+        travel = TRAVELS[i] if i < len(TRAVELS) else TRAVELS[-1]
+        if walls is not None and walls.test_ball and i == 0:   # test: ball in the hallway
+            ahead = np.array([np.cos(robot["yaw"]), np.sin(robot["yaw"])]) * travel * BALL_ALONG
+            walls.add_ball([robot["x"] + ahead[0], robot["y"] + ahead[1], 0.30], walls.test_ball)
+        drive(travel)
         route.append((robot["x"], robot["y"]))
         turn(Second_turn)
         drive(second_travel)

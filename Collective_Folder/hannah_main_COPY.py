@@ -5,19 +5,26 @@ from pathlib import Path
 from spatialmath import SE3
 from spatialgeometry import Mesh, Cylinder
 
-# Project folder (the one holding Hannah_Work, Maryam_Work, ...) on the path
+# Project folder on the path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from EnviroParts_S.Full_sim import create_environment as create_full_sim
+
+#saftey features
+from Collective_Folder.Prison_break import PrisonBreak
 from Light_curtain import SafetyLightCurtain
 from Prisoner_movement import walk_all_prisoners
 
+#Hannah
+from Hannah_Work.wall_collision import WallCollision
 from Hannah_Work.Feed_Iso import feed_iso
+
+#Maryam
 from Maryam_Work.Maryam_robotclass import MaryamBot
-from Yara_Work.YaraBot_DH import YaraBot
 from Maryam_Work.maryamrobot_controller import RobotController
 
-from Collective_Folder.Prison_break import PrisonBreak
+#Yara
+from Yara_Work.YaraBot_DH import YaraBot
 
 # ReBot and water bottle demonstration
 from Rebot_class import ReBot
@@ -27,15 +34,19 @@ from rebot_bottle_demo import (
     tool_pose
 )
 
-# Create ONE Swift simulation
+# Creates one Swift simulation
 env = swift.Swift()
 env.launch(realtime=True)
 
-# The whole building, prisoners and the three yellow trays.
+# Whole simulation 
 scene = create_full_sim(env)
 
-prison = PrisonBreak(env, scene)
-prison.arm()
+#Hannah Collision 
+walls = WallCollision(env, scene)
+walls.watch_trays([scene["yellowTray1"], scene["yellowTray2"], scene["yellowtray3"]])
+walls.test_ball_in_path()   
+walls.arm()
+
 
 # Maryam's Kawasaki
 maryambot = MaryamBot()
@@ -54,10 +65,12 @@ rebot.update_meshes()
 
 env.step(0.05)
 
-# ---------------- Hannah's robot delivers the trays ----------------
+walk_all_prisoners(env, scene)
+
+#Feed Iso prisoners 
 hannahbot, turtlebot, success = feed_iso(env, [scene["yellowTray1"],
                                                scene["yellowTray2"],
-                                               scene["yellowtray3"]])
+                                               scene["yellowtray3"]], walls=walls)
 print("HannahBot feed_iso succeeded:", success)
 
 env.hold()
