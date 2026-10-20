@@ -53,7 +53,7 @@ def create_environment(env):  # Use the existing Swift simulation
 
     # One green tray beside the Kawasaki
     green_tray = Mesh(green_tray_file)
-    green_tray.T = SE3(13.3, 3.7, 0.7).A
+    green_tray.T = SE3(13.15, 3.7, 0.7).A
     env.add(green_tray)
 
     return groot, green_tray  # Access both objects from main_testing.py

@@ -1,7 +1,10 @@
+
 from math import pi
 import os
+import numpy as np
 import roboticstoolbox as rtb
 from ir_support.robots.UTSMeshRobot import UTSMeshRobot
+
 
 class MaryamBot(UTSMeshRobot):
     """
@@ -11,20 +14,20 @@ class MaryamBot(UTSMeshRobot):
     - Standard DH parameters
     - Custom STL graphical meshes
     - UTSMeshRobot for Swift visualisation
+    - Manufacturer joint limits
     """
 
     def __init__(self, base=None):
 
         # =====================================================
-        # MESH DIRECTORY
+        # 1. MESH DIRECTORY
         # =====================================================
 
-        # STL files are stored in the same folder as this file
+        # STL files are stored in the same folder as this file.
         mesh_dir = os.path.dirname(os.path.abspath(__file__))
 
-
         # =====================================================
-        # LINK MESH NAMES + COLOURS
+        # 2. LINK MESH NAMES + COLOURS
         # =====================================================
 
         link3d_names = {
@@ -46,16 +49,17 @@ class MaryamBot(UTSMeshRobot):
             "color6": (0.55, 0.20, 0.80, 1.0),
         }
 
-
         # =====================================================
-        # KAWASAKI RS007N STANDARD DH PARAMETERS
+        # 3. KAWASAKI RS007N STANDARD DH PARAMETERS
         # =====================================================
 
+        # Convert degrees into radians.
+        # Robotics Toolbox uses radians for revolute joints.
         deg = pi / 180
 
         links = [
 
-            # Joint 1
+            # JOINT 1 - BASE ROTATION
             rtb.RevoluteDH(
                 d=0.360,
                 a=0.0,
@@ -65,7 +69,7 @@ class MaryamBot(UTSMeshRobot):
                 qlim=[-180 * deg, 180 * deg]
             ),
 
-            # Joint 2
+            # JOINT 2 - SHOULDER
             rtb.RevoluteDH(
                 d=0.0,
                 a=0.355,
@@ -74,7 +78,7 @@ class MaryamBot(UTSMeshRobot):
                 qlim=[-135 * deg, 135 * deg]
             ),
 
-            # Joint 3
+            # JOINT 3 - ELBOW
             rtb.RevoluteDH(
                 d=0.0,
                 a=0.0,
@@ -84,7 +88,7 @@ class MaryamBot(UTSMeshRobot):
                 qlim=[-155 * deg, 155 * deg]
             ),
 
-            # Joint 4
+            # JOINT 4 - WRIST ROTATION
             rtb.RevoluteDH(
                 d=0.375,
                 a=0.0,
@@ -93,7 +97,7 @@ class MaryamBot(UTSMeshRobot):
                 qlim=[-200 * deg, 200 * deg]
             ),
 
-            # Joint 5
+            # JOINT 5 - WRIST BENDING
             rtb.RevoluteDH(
                 d=0.0,
                 a=0.0,
@@ -103,7 +107,7 @@ class MaryamBot(UTSMeshRobot):
                 qlim=[-125 * deg, 125 * deg]
             ),
 
-            # Joint 6
+            # JOINT 6 - TOOL ROTATION
             rtb.RevoluteDH(
                 d=0.078,
                 a=0.0,
@@ -113,9 +117,8 @@ class MaryamBot(UTSMeshRobot):
             ),
         ]
 
-
         # =====================================================
-        # CREATE THE UTS MESH ROBOT
+        # 4. CREATE THE UTS MESH ROBOT
         # =====================================================
 
         super().__init__(
@@ -131,4 +134,38 @@ class MaryamBot(UTSMeshRobot):
             link3d_names=link3d_names,
 
             base=base,
+        )
+
+        # =====================================================
+        # 5. CONSERVATIVE SOFTWARE JOINT LIMITS
+        # =====================================================
+
+        # Smaller than the mechanical joint limits.
+        # These are INITIAL simulation limits only.
+        # They must be tested against the actual STL geometry.
+        # Shape: 2 rows x 6 joints.
+        self.safe_qlim = np.deg2rad([
+            [-170, -120, -140, -180, -110, -330],
+            [ 170,  120,  140,  180,  110,  330]
+        ])
+
+    # =========================================================
+    # 6. CHECK WHETHER JOINT ANGLES ARE WITHIN SAFE LIMITS
+    # =========================================================
+
+    def joints_safe(self, q):
+        """
+        Returns True if all six joint angles are within the
+        conservative software limits.
+
+        This does NOT guarantee the robot is collision-free.
+        """
+        q = np.asarray(q, dtype=float)
+
+        if q.shape != (6,):
+            raise ValueError("Expected 6 joint angles")
+
+        return bool(
+            np.all(q >= self.safe_qlim[0]) and
+            np.all(q <= self.safe_qlim[1])
         )
