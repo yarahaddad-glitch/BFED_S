@@ -18,6 +18,11 @@ from Maryam_Work.Maryam_robotclass import MaryamBot
 ROBOT_BASE_X = 14.5  # Moving marayms robot and trays 
 ROBOT_FORWARD_Y = -0.05 # maryamas robot movin forward 
 
+TRAY_Y_OFFSET_FROM_BENCH = 0.0
+TRAY_SCALE = 2.0
+TRAY_X_OFFSET_FROM_ROBOT = 0.65  # Metres to each side of the robot.
+GREEN_TRAY_EXTRA_X_OFFSET = 0.40  # Move the green stack farther toward -X.
+
 # DO NOT CHANGE THIS IN MARYAM BOTS DIRECTION AT ALL
 CONVEYOR_DEPTH_SCALE = 0.56
 CONVEYOR_ORIGINAL_FAR_EDGE_Y = 2.53473288
@@ -42,6 +47,36 @@ def add_maryam_robot(env, objects):
     robot = MaryamBot(base=base_pose * SE3.Rz(pi))
     robot.add_to_env(env)
     return robot
+
+
+def add_tray_stacks(env, robot):
+    """Add two enlarged trays per colour, neatly stacked beside the robot."""
+    tray_folder = assignment_folder / "Yara_Work" / "EnviroParts"
+    # Scale the mesh centre and height too, preserving stack placement.
+    centre_x = 0.15 * TRAY_SCALE
+    centre_y = -0.0989120895 * TRAY_SCALE
+    tray_height = 0.018043518 * TRAY_SCALE
+    stack_gap = 0.005
+    stacks = {}
+    for colour, side in (("green", -1), ("blue", 1)):
+        path = tray_folder / f"tray_{colour}.dae"
+        if not path.is_file():
+            raise FileNotFoundError(f"Missing tray mesh: {path}")
+        stack_x = robot.base.t[0] + side * TRAY_X_OFFSET_FROM_ROBOT
+        if colour == "green":
+            stack_x -= GREEN_TRAY_EXTRA_X_OFFSET
+        stack_y = robot.base.t[1] - ROBOT_FORWARD_Y + TRAY_Y_OFFSET_FROM_BENCH
+        for level in range(2):
+            tray = Mesh(path.as_posix())
+            tray.scale = [TRAY_SCALE] * 3
+            tray.T = SE3(
+                stack_x - centre_x,
+                stack_y - centre_y,
+                robot.base.t[2] + 0.002 + level * (tray_height + stack_gap),
+            ).A
+            env.add(tray)
+            stacks[f"{colour}_tray_{level + 1}"] = tray
+    return stacks
 
 
 # DO NOT CHNAGE 
@@ -294,24 +329,6 @@ def create_environment(env):
         x= 9.27, y= 3.6, z=0.88,
     )
 
-    blueTray1 = add_mesh(
-        "blueTray1", Food_folder, "tray_blue.dae",
-        x =15.25, y=4.5, z=0.625,
-        scale = 2
-    )
-
-    greenTray= add_mesh(
-        "greenTray", Food_folder, "tray_green.dae",
-        x =15.25, y=4.5, z=0.69,
-        scale = 2
-    )
-
-    blueTray2 = add_mesh(
-        "blueTray2", Food_folder, "tray_blue.dae",
-        x =15.25, y=4.5, z=0.76,
-        scale = 2
-    )
-
     #eat food
     lettuce1= add_mesh(
         "lettuce1", Food_folder, "lettuce.dae",
@@ -371,6 +388,8 @@ if __name__ == "__main__":
 
     objects = create_environment(env)
     maryambot = add_maryam_robot(env, objects)
+    trays = add_tray_stacks(env, maryambot)
+    objects.update(trays)
     env.step()
 
     env.hold()
