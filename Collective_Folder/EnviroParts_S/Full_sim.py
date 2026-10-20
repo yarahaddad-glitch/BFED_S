@@ -43,6 +43,8 @@ def create_environment(env):
 
         env.add(mesh)
 
+        objects[name] = mesh
+        
         return mesh
 
     # INSIDE ISOLATION AREA
