@@ -8,9 +8,6 @@ from spatialgeometry import Mesh, Cuboid
 from ir_support_extra_robots import Turtlebot3Waffle
 from Class_HannahBot import HannahBot
 
-print("\n=== HANNAHBOT STRAIGHT APPROACH TO TRAY (RMRC) ===")
-print("Running file:", Path(__file__).resolve())
-
 # --- approach, measured from the tray's NEAR edge (the side closest to HannahBot)
 PRE_DISTANCE   = 0.20   
 PICKUP_INSET   = -0.12 
@@ -97,7 +94,7 @@ tray_path = (
     project_folder
     / "Yara_Work"
     / "EnviroParts"
-    / "Tray.dae"
+    / "tray_yellow.dae"
 )
 
 if not tray_path.is_file():
@@ -228,10 +225,6 @@ def targets():
     return pre_xyz, pick_xyz
 
 
-# ============================================================
-# 5. CONTROLLER SETTINGS
-# ============================================================
-
 Kp_pos = 2.0
 Kp_rot = 2.0
 max_joint_speed = 0.8
@@ -261,10 +254,6 @@ print(f"Working distance (tray near edge to arm base): {WORK_DISTANCE:.3f} m")
 place_turtle(work_x() - TURTLE_START_BACK)
 env.step(0.05)
 
-
-# ============================================================
-# 6. KINEMATICS
-# ============================================================
 
 def ee_pose(q=None):
     return robot.measured_fkine(robot.q if q is None else q)
@@ -300,10 +289,7 @@ def rotation_error(target_R, current_R):
 def orientation_error_deg(T):
     return np.rad2deg(np.linalg.norm(rotation_error(R_target, T.R)))
 
-
-# ============================================================
-# 7. ONE RMRC MOVE (position + orientation, 6D)
-# ============================================================
+#RMRC
 
 def move_to(target_xyz, duration, name):
     print(f"\n=== {name} ===")

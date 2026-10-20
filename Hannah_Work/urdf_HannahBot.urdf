@@ -1,0 +1,255 @@
+<!-- <!-- <?xml version="1.0"?>
+<robot name="HannahBot">
+
+
+<! Base link -->
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="Hannah Meshes/IR_mesh_base.dae"/>
+      </geometry>
+    </visual>
+  </link>
+
+
+
+
+<!-- Link 1 -->
+  <link name="link1">
+    <visual>
+      <geometry>
+        <mesh filename="Hannah Meshes/IR_mesh_link1.dae"/>
+      </geometry>
+    </visual>
+  </link>
+
+  </joint name= "joint1" type="revolute">
+    <parent link="base_link"/>
+    <child link="link1"/>
+    <origin xyz="0 0 0.1452" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-4.712389" upper="4.712389" effort="157" velocity="3.141593"/>
+  </joint>
+
+
+
+
+<!-- Link 2 -->
+  <link name="link2">
+    <visual>
+      <geometry>
+        <mesh filename="Hannah Meshes/IR_mesh_link2.dae"/>
+      </geometry>
+    </visual>
+  </link>
+
+  </joint name= "joint2" type="revolute">
+        <parent link="link1"/>
+        <child link="link2"/>
+        <origin xyz="0 0 0" rpy="-1.5708 -1.5708 0"/>
+        <axis xyz="0 0 1"/>
+        <limit lower="3.14159" upper="3.14159" effort="157" velocity="3.141593"/>
+  </joint> 
+
+ -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<?xml version="1.0"?>
+
+<robot name="Hannah_TM5_900">
+
+    <!-- ==================== BASE ==================== -->
+
+    <link name="base_link">
+        <visual>
+            <geometry>
+                <mesh filename="Hannah Meshes/IR_mesh_base.dae"/>
+            </geometry>
+        </visual>
+    </link>
+
+
+    <!-- ==================== LINK 1 ==================== -->
+
+    <link name="link1">
+        <visual>
+            <geometry>
+                <mesh filename="Hannah Meshes/IR_mesh_link1.dae"/>
+            </geometry>
+        </visual>
+    </link>
+
+    <joint name="joint1" type="revolute">
+        <parent link="base_link"/>
+        <child link="link1"/>
+
+        <origin xyz="0 0 0.1452"
+                rpy="0 0 0"/>
+
+        <axis xyz="0 0 1"/>
+
+        <limit lower="-4.712389"
+               upper="4.712389"
+               effort="157"
+               velocity="3.141593"/>
+    </joint>
+
+
+    <!-- ==================== LINK 2 ==================== -->
+
+    <link name="link2">
+        <visual>
+            <geometry>
+                <mesh filename="Hannah Meshes/IR_mesh_link2.dae"/>
+            </geometry>
+        </visual>
+    </link>
+
+    <joint name="joint2" type="revolute">
+        <parent link="link1"/>
+        <child link="link2"/>
+
+        <origin xyz="0 0 0"
+                rpy="-1.570796 -1.570796 0"/>
+
+        <axis xyz="0 0 1"/>
+
+        <limit lower="-3.141593"
+               upper="3.141593"
+               effort="157"
+               velocity="3.141593"/>
+    </joint>
+
+
+    <!-- ==================== LINK 3 ==================== -->
+
+    <link name="link3">
+        <visual>
+            <geometry>
+                <mesh filename="Hannah Meshes/IR_mesh_link3.dae"/>
+            </geometry>
+        </visual>
+    </link>
+
+    <joint name="joint3" type="revolute">
+        <parent link="link2"/>
+        <child link="link3"/>
+
+        <origin xyz="0.429 0 0"
+                rpy="0 0 0"/>
+
+        <axis xyz="0 0 1"/>
+
+        <limit lower="-2.705260"
+               upper="2.705260"
+               effort="157"
+               velocity="3.141593"/>
+    </joint>
+
+
+    <!-- ==================== LINK 4 ==================== -->
+
+    <link name="link4">
+        <visual>
+            <geometry>
+                <mesh filename="Hannah Meshes/IR_mesh_link4.dae"/>
+            </geometry>
+        </visual>
+    </link>
+
+    <joint name="joint4" type="revolute">
+        <parent link="link3"/>
+        <child link="link4"/>
+
+        <origin xyz="0.4115 0 -0.1223"
+                rpy="0 0 1.570796"/>
+
+        <axis xyz="0 0 1"/>
+
+        <limit lower="-3.141593"
+               upper="3.141593"
+               effort="43"
+               velocity="3.926991"/>
+    </joint>
+
+
+    <!-- ==================== LINK 5 ==================== -->
+
+    <link name="link5">
+        <visual>
+            <geometry>
+                <mesh filename="Hannah Meshes/IR_mesh_link5.dae"/>
+            </geometry>
+        </visual>
+    </link>
+
+    <joint name="joint5" type="revolute">
+        <parent link="link4"/>
+        <child link="link5"/>
+
+        <origin xyz="0 -0.106 0"
+                rpy="1.570796 0 0"/>
+
+        <axis xyz="0 0 1"/>
+
+        <limit lower="-3.141593"
+               upper="3.141593"
+               effort="43"
+               velocity="3.926991"/>
+    </joint>
+
+
+    <!-- ==================== LINK 6 ==================== -->
+
+    <link name="link6">
+        <visual>
+            <geometry>
+                <mesh filename="Hannah Meshes/IR_mesh_link6.dae"/>
+            </geometry>
+        </visual>
+    </link>
+
+    <joint name="joint6" type="revolute">
+        <parent link="link5"/>
+        <child link="link6"/>
+
+        <origin xyz="0 -0.11315 0"
+                rpy="1.570796 0 0"/>
+
+        <axis xyz="0 0 1"/>
+
+        <limit lower="-4.712389"
+               upper="4.712389"
+               effort="43"
+               velocity="3.926991"/>
+    </joint>
+
+</robot>
+
