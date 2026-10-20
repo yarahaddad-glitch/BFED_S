@@ -90,6 +90,8 @@ def create_environment(env):
     meal_folder = os.path.join(enviro_folder, "meal_area")
     tables_folder = os.path.join(enviro_folder, "tables")
     Extra_folder = os.path.join(enviro_folder, "Extra")
+    prisoners_folder = os.path.join(enviro_folder, "Prisoners")
+    Food_folder = os.path.join(enviro_folder, "food")
 
     objects = {}
 
@@ -172,7 +174,7 @@ def create_environment(env):
 
     backWall2 = add_mesh(
         "backWall2", outside_folder, "backWall2.dae",
-        x=4.8, y=24.2, z=0
+        x=4.8, y=24.3, z=0
     )
 
     LeftWall = add_mesh(
@@ -182,14 +184,14 @@ def create_environment(env):
 
     rightWall = add_mesh(
         "rightWall", outside_folder, "rightWall.dae",
-        x=0.32, y=12.7, z=0
+        x=0.27, y=12.8, z=0
     )
 
     # MEAL AREA
 
     backWall_meal = add_mesh(
         "backWall_meal", meal_folder, "bakcWall.dae",
-        x=14.9, y=1.267, z=-0.01
+        x=14.9, y=1.267, z=-0.06
     )
 
     botCounter = add_mesh(
@@ -199,52 +201,47 @@ def create_environment(env):
 
     Conv1_1 = add_mesh(
         "Conv1_1", meal_folder, "Conv1.dae",
-        x=13.45, y=conveyor_y(2.75), z=0.68,
-        scale=[1, CONVEYOR_DEPTH_SCALE, 1]
+        x=13.45, y=2.75, z=0.61
     )
 
     Conv1_2 = add_mesh(
         "Conv1_2", meal_folder, "Conv1.dae",
-        x=13.45, y=conveyor_y(3.888), z=0.68,
-        scale=[1, CONVEYOR_DEPTH_SCALE, 1]
+        x=13.45, y=3.888, z=0.61
     )
 
     Conv2_1 = add_mesh(
         "Conv2_1", meal_folder, "Conv2.dae",
-        x=14.96,
-        y=conveyor_y(3.429), z=0.68, scale=[1, CONVEYOR_DEPTH_SCALE, 1]
+        x=14.96, y=3.429, z=0.58
     )
 
     Conv2_2 = add_mesh(
         "Conv2_2", meal_folder, "Conv2.dae",
-        x=11.93,
-        y=conveyor_y(3.429), z=0.68, scale=[1, CONVEYOR_DEPTH_SCALE, 1]
+        x=11.92, y=3.429, z=0.58
     )
 
     ConvCounter = add_mesh(
         "ConvCounter", meal_folder, "ConvCounter.dae",
-        x=13.001,
-        y=conveyor_y(3.3), z=0.025, scale=[1, CONVEYOR_DEPTH_SCALE, 1]
+        x=13.05, y=3.3, z=0.025
     )
 
     Door = add_mesh(
         "Door", meal_folder, "Door.dae",
-        x=15.95, y= 2, z=0
+        x=15.95, y= 2.05, z=-0.01
     )
 
     ExtraCounter = add_mesh(
         "ExtraCounter", meal_folder, "ExtraCounter.dae",
-        x=15.72, y=3.68, z=0.01
+        x=15.76, y=3.68, z=0.02
     )
 
     frontBar2 = add_mesh(
         "frontBar2", meal_folder, "frontBar2.dae",
-        x=15.39, y=4.6, z=0.5
+        x=10, y=4.65, z=0.5
     )
 
     frontBars = add_mesh(
         "frontBars", meal_folder, "frontBars.dae",
-        x=12.15, y=4.6, z=0.5
+        x=13.4, y=4.65, z=0.5
     )
 
     HannahCounter = add_mesh(
@@ -259,7 +256,7 @@ def create_environment(env):
 
     ledtBars = add_mesh(
         "ledtBars", meal_folder, "ledtBars.dae",
-        x=16.02, y=3.55, z=0.67
+        x=16.02, y=3.55, z=0.6
     )
 
     OverHead = add_mesh(
@@ -279,6 +276,48 @@ def create_environment(env):
     extra = add_mesh(
         "extra", Extra_folder, "Yard.dae",
         x= 0, y=0, z=0
+    )
+
+    #add prisoners 
+    Iso_prisoner1 = add_mesh(
+        "Iso_prisoner1", prisoners_folder, "ISO_prisoner.dae",
+        x = 3, y = 10.7 , z = 0
+    )
+
+    Iso_prisoner2 = add_mesh(
+        "Iso_prisoner2", prisoners_folder, "drex.stl",
+        x = 5, y = 19, z=-0.03,
+        rz=pi/2,
+        scale = 13
+    )
+
+    prisoner1 = add_mesh(
+        "prisoner1", prisoners_folder, "blueFoodPrisoner.dae",
+        x = 0, y=0, z = 0
+        )
+
+    prisoner2 = add_mesh(
+        "prisoner2", prisoners_folder, "blueFoodPrisoner2.dae",
+        x = 3, y=0, z=0
+    )
+
+    #Add food
+    yellowTray1 = add_mesh(
+        "yellowTray1", Food_folder, "tray_yellow.dae",
+        x= 9.27, y= 2.3, z=0.88,
+        scale = 2
+    )
+
+    yellowtray2 = add_mesh(
+        "yellowTray2", Food_folder, "tray_yellow.dae",
+        x= 9.27, y= 2.9, z=0.88,
+        scale = 2
+    )
+
+    yellowTray3 = add_mesh(
+        "yellowtray3", Food_folder, "tray_yellow.dae",
+        x= 9.27, y= 3.6, z=0.88,
+        scale = 2
     )
 
     return objects
