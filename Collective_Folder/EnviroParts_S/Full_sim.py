@@ -8,7 +8,6 @@ from math import pi
 def create_environment(env):
 
     # FOLDER LOCATIONS
-
     enviro_folder = os.path.dirname(os.path.abspath(__file__))
 
     isolation_folder = os.path.join(enviro_folder, "isolation_area")
@@ -27,7 +26,7 @@ def create_environment(env):
 
 
     def add_mesh(name, folder, filename, x=0, y=0, z=0,
-                 rz=0, scale=1):
+                 rz=0, ry =0, rx=0, scale=1):
 
         file_path = os.path.join(folder, filename)
 
@@ -37,7 +36,9 @@ def create_environment(env):
 
         mesh.T = (
             SE3(x, y, z) *
-            SE3.Rz(rz)
+            SE3.Rz(rz) *
+            SE3.Rx(rx) *
+            SE3.Ry(ry)
         ).A
 
         env.add(mesh)
@@ -290,6 +291,12 @@ def create_environment(env):
     nuggets = add_mesh(
         "nuggets", Food_folder, "3nuggets.dae",
         x=0.06, y=0, z=0
+    )
+
+    papertowel1 = add_mesh(
+        "papertowel1", Food_folder, "paper_towel.dae",
+        x = 12.8, y=4.5, z=0.76,
+        rx = pi/2
     )
 
     return objects
