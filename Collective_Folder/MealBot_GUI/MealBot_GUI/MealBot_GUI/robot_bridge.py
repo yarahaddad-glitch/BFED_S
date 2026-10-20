@@ -1,13 +1,25 @@
-"""Simulation-only bridge to the existing robot classes. No originals are modified."""
+"""Simulation-only bridge to existing robot classes."""
+
 import sys
 from pathlib import Path
 import numpy as np
 from spatialmath import SE3
 
-# .../Assignment 2/Collective_Folder/MealBot_GUI/robot_bridge.py
-ASSIGNMENT_DIR = Path(__file__).resolve().parents[2]
-if str(ASSIGNMENT_DIR) not in sys.path:
-    sys.path.insert(0, str(ASSIGNMENT_DIR))
+# Find the project root regardless of how deeply the GUI folder is nested.
+ASSIGNMENT_ROOT = next(
+    (parent for parent in Path(__file__).resolve().parents
+     if all((parent / folder).is_dir()
+            for folder in ("Maryam_Work", "Hannah_Work", "Yara_Work"))),
+    None,
+)
+if ASSIGNMENT_ROOT is None:
+    raise ImportError(
+        "Cannot find the robot folders. Keep the GUI inside the Assignment 2 "
+        "project containing Maryam_Work, Hannah_Work and Yara_Work."
+    )
+
+if str(ASSIGNMENT_ROOT) not in sys.path:
+    sys.path.insert(0, str(ASSIGNMENT_ROOT))
 
 CONFIG = {
     'MaryamBot': {'module':'Maryam_Work.Maryam_robotclass', 'class':'MaryamBot',
