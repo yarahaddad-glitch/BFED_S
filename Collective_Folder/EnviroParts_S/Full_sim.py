@@ -85,7 +85,6 @@ def configure_swift_server():
 def create_environment(env):
 
     # FOLDER LOCATIONS
-
     enviro_folder = os.path.dirname(os.path.abspath(__file__))
 
     isolation_folder = os.path.join(enviro_folder, "isolation_area")
@@ -104,7 +103,7 @@ def create_environment(env):
 
 
     def add_mesh(name, folder, filename, x=0, y=0, z=0,
-                 rz=0, scale=1):
+                 rz=0, ry =0, rx=0, scale=1):
 
         file_path = os.path.join(folder, filename)
 
@@ -112,15 +111,15 @@ def create_environment(env):
             print(f"Missing file: {file_path}")
             return None
 
-        # Swift sends this filename to its browser's mesh loader. Forward
-        # slashes preserve the directory when the loader resolves asset URLs.
-        mesh = Mesh(Path(file_path).resolve().as_posix())
+        mesh = Mesh(file_path)
 
         mesh.scale = [scale, scale, scale] if isinstance(scale, (int, float)) else scale
 
         mesh.T = (
             SE3(x, y, z) *
-            SE3.Rz(rz)
+            SE3.Rz(rz) *
+            SE3.Rx(rx) *
+            SE3.Ry(ry)
         ).A
 
         print(f"Loading: {name}", flush=True)
@@ -134,9 +133,7 @@ def create_environment(env):
             ) from exc
 
         objects[name] = mesh
-
-        print(f"Loaded: {name}")
-
+        
         return mesh
 
     # INSIDE ISOLATION AREA
@@ -168,7 +165,7 @@ def create_environment(env):
 
     ISO_door3 = add_mesh(
         "ISO_door3", inside_folder, "ISO_door.dae",
-        x=4.6, y=20.6, z=0
+        x=4.6, y=20.67, z=0
     )
 
     # OUTSIDE ISOLATION AREA
@@ -242,12 +239,12 @@ def create_environment(env):
 
     frontBar2 = add_mesh(
         "frontBar2", meal_folder, "frontBar2.dae",
-        x=10, y=4.65, z=0.5
+        x=10, y=4.7, z=0.5
     )
 
     frontBars = add_mesh(
         "frontBars", meal_folder, "frontBars.dae",
-        x=13.4, y=4.65, z=0.5
+        x=13.4, y=4.7, z=0.5
     )
 
     HannahCounter = add_mesh(
@@ -291,10 +288,9 @@ def create_environment(env):
     )
 
     Iso_prisoner2 = add_mesh(
-        "Iso_prisoner2", prisoners_folder, "drex.stl",
-        x = 5, y = 19, z=-0.03,
-        rz=pi/2,
-        scale = 13
+        "Iso_prisoner2", prisoners_folder, "Drax.dae",
+        x = 3, y = 19.7, z=0,
+        rz=pi/2
     )
 
     prisoner1 = add_mesh(
@@ -307,23 +303,91 @@ def create_environment(env):
         x = 3, y=0, z=0
     )
 
+    prisoner3 = add_mesh(
+        "prisoner3", prisoners_folder, "GreenFoodPrisoner.dae",
+        x=2, y=0, z =0,
+    )
+
     #Add food
     yellowTray1 = add_mesh(
-        "yellowTray1", Food_folder, "tray_yellow.dae",
+        "yellowTray1", Food_folder, "TrayYellowFood.dae",
         x= 9.27, y= 2.3, z=0.88,
-        scale = 2
     )
 
     yellowtray2 = add_mesh(
-        "yellowTray2", Food_folder, "tray_yellow.dae",
+        "yellowTray2", Food_folder, "TrayYellowFood.dae",
         x= 9.27, y= 2.9, z=0.88,
-        scale = 2
     )
 
     yellowTray3 = add_mesh(
-        "yellowtray3", Food_folder, "tray_yellow.dae",
+        "yellowtray3", Food_folder, "TrayYellowFood.dae",
         x= 9.27, y= 3.6, z=0.88,
+    )
+
+    blueTray1 = add_mesh(
+        "blueTray1", Food_folder, "tray_blue.dae",
+        x =15.25, y=4.5, z=0.625,
         scale = 2
+    )
+
+    greenTray= add_mesh(
+        "greenTray", Food_folder, "tray_green.dae",
+        x =15.25, y=4.5, z=0.69,
+        scale = 2
+    )
+
+    blueTray2 = add_mesh(
+        "blueTray2", Food_folder, "tray_blue.dae",
+        x =15.25, y=4.5, z=0.76,
+        scale = 2
+    )
+
+    #eat food
+    lettuce1= add_mesh(
+        "lettuce1", Food_folder, "lettuce.dae",
+        x = 15, y=1.4, z=0.3,
+        scale= 0.3
+    )
+
+    lettuce2= add_mesh(
+        "lettuce2", Food_folder, "lettuce.dae",
+        x = 14.65, y=1.4, z=0.3,
+        scale= 0.3
+    )
+
+    lettuce3= add_mesh(
+        "lettuce3", Food_folder, "lettuce.dae",
+        x = 14.3, y=1.4, z=0.3,
+        scale= 0.3
+    )
+
+    cookies1 = add_mesh(
+        "cookies1", Food_folder, "cookies.dae",
+        x = 13.6, y = 1.4, z = 0.3,
+        scale = 0.3
+    )
+
+    cookies2 = add_mesh(
+        "cookies2", Food_folder, "cookies.dae",
+        x = 13.2, y = 1.4, z = 0.3,
+        scale = 0.3
+    )
+
+    cookies3 = add_mesh(
+        "cookies3", Food_folder, "cookies.dae",
+        x = 12.8, y = 1.4, z = 0.3,
+        scale = 0.3
+    )
+
+    nuggets = add_mesh(
+        "nuggets", Food_folder, "3nuggets.dae",
+        x=0.06, y=0, z=0
+    )
+
+    papertowel1 = add_mesh(
+        "papertowel1", Food_folder, "paper_towel.dae",
+        x = 12.8, y=4.5, z=0.76,
+        rx = pi/2
     )
 
     return objects
