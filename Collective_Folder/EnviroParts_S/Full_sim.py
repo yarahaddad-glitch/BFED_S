@@ -18,6 +18,11 @@ from Maryam_Work.Maryam_robotclass import MaryamBot
 ROBOT_BASE_X = 14.5  # Moving marayms robot and trays 
 ROBOT_FORWARD_Y = -0.05 # maryamas robot movin forward 
 
+# Adjust BOTH tray stacks along y, in metres from the bench centre.
+# Increase for +y (away from conveyor); decrease for -y.
+# 0.0 moves the trays 20 cm farther in +y than their old -0.20 setting.
+TRAY_Y_OFFSET_FROM_BENCH = 0.0
+
 # DO NOT CHANGE THIS IN MARYAM BOTS DIRECTION AT ALL
 CONVEYOR_DEPTH_SCALE = 0.56
 CONVEYOR_ORIGINAL_FAR_EDGE_Y = 2.53473288
@@ -26,6 +31,8 @@ CONVEYOR_FAR_EDGE_Y = 2.91736668
 
 def conveyor_y(original_y):
     return CONVEYOR_FAR_EDGE_Y + (original_y - CONVEYOR_ORIGINAL_FAR_EDGE_Y) * CONVEYOR_DEPTH_SCALE
+
+
 
 
 def add_maryam_robot(env, objects):
@@ -55,8 +62,7 @@ def add_tray_stacks(env, robot):
         if not path.is_file():
             raise FileNotFoundError(f"Missing tray mesh: {path}")
         stack_x = robot.base.t[0] + side * 0.45
-        # Keep trays at their existing bench position as the robot moves forward.
-        stack_y = robot.base.t[1] - ROBOT_FORWARD_Y - 0.20
+        stack_y = robot.base.t[1] - ROBOT_FORWARD_Y + TRAY_Y_OFFSET_FROM_BENCH
         for level in range(2):
             tray = Mesh(path.as_posix())
             tray.T = SE3(
@@ -201,7 +207,7 @@ def create_environment(env):
 
     Conv1_1 = add_mesh(
         "Conv1_1", meal_folder, "Conv1.dae",
-        x=13.45, y=2.75, z=0.61
+        x=13.45, y=2.75, z=0.68
     )
 
     Conv1_2 = add_mesh(
