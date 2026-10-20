@@ -216,8 +216,9 @@ class RobotController:
         print(f"Controller configuration valid: {self.valid(q)}")
         print("Current EE XYZ:", np.round(self.robot.fkine(q).t, 4))
 
-    def plan(self, target, hold_rotation=None):
-        q0 = np.asarray(self.robot.q, dtype=float).copy()
+    def plan(self, target, hold_rotation=None, *, q_start=None):
+        """Plan from the current or supplied joints without moving the robot."""
+        q0 = np.asarray(self.robot.q if q_start is None else q_start, dtype=float).copy()
         target = np.asarray(target, dtype=float)
         if target.shape != (3,) or not np.all(np.isfinite(target)):
             raise ValueError("Target must be a finite XYZ vector")
