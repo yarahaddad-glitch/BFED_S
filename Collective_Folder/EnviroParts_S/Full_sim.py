@@ -204,12 +204,12 @@ def create_environment(env):
 
     botCounter = add_mesh(
         "botCounter", meal_folder, "botCounter.dae",
-        x=13, y=4.3, z=-0.004
+        x=12.75, y=4.4, z=-0.006
     )
 
     Conv1_1 = add_mesh(
         "Conv1_1", meal_folder, "Conv1.dae",
-        x=13.45, y=2.75, z=0.68
+        x=13.45, y=2.75, z=0.61
     )
 
     Conv1_2 = add_mesh(
@@ -332,37 +332,37 @@ def create_environment(env):
     #eat food
     lettuce1= add_mesh(
         "lettuce1", Food_folder, "lettuce.dae",
-        x = 15, y=1.4, z=0.3,
+        x = 15, y=1.45, z=0.3,
         scale= 0.3
     )
 
     lettuce2= add_mesh(
         "lettuce2", Food_folder, "lettuce.dae",
-        x = 14.65, y=1.4, z=0.3,
+        x = 14.65, y=1.45, z=0.3,
         scale= 0.3
     )
 
     lettuce3= add_mesh(
         "lettuce3", Food_folder, "lettuce.dae",
-        x = 14.3, y=1.4, z=0.3,
+        x = 14.3, y=1.45, z=0.3,
         scale= 0.3
     )
 
     cookies1 = add_mesh(
         "cookies1", Food_folder, "cookies.dae",
-        x = 13.6, y = 1.4, z = 0.3,
+        x = 13.6, y = 1.45, z = 0.3,
         scale = 0.3
     )
 
     cookies2 = add_mesh(
         "cookies2", Food_folder, "cookies.dae",
-        x = 13.2, y = 1.4, z = 0.3,
+        x = 13.2, y = 1.45, z = 0.3,
         scale = 0.3
     )
 
     cookies3 = add_mesh(
         "cookies3", Food_folder, "cookies.dae",
-        x = 12.8, y = 1.4, z = 0.3,
+        x = 12.8, y = 1.45, z = 0.3,
         scale = 0.3
     )
 
@@ -373,7 +373,7 @@ def create_environment(env):
 
     papertowel1 = add_mesh(
         "papertowel1", Food_folder, "paper_towel.dae",
-        x = 12.8, y=4.5, z=0.76,
+        x = 11, y=4.5, z=0.675,
         rx = pi/2
     )
 
