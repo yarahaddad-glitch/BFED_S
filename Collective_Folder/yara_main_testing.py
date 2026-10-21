@@ -6,26 +6,28 @@ from pathlib import Path
 from spatialmath import SE3
 from roboticstoolbox import jtraj
 from ir_support_extra_robots.robots import Turtlebot3Waffle
-
+ 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
+ 
 from Yara_Work.YaraBot_DH import YaraBot
 from Yara_Work.YaraBot_Collision import CollisionBox, check_arm_collision, get_link_positions
-
+ 
 # ---------------- Settings ----------------
 DT = 0.05
+FRAME_SKIP = 2  # play every Nth frame (1 = slowest/smoothest)
+IK_TRIES = 40  # random IK starts when searching for the placement pose
 TURTLE_Z = 0.027
 MOUNT_HEIGHT = 0.10
-
+ 
 FOOD_STATIONS = {"blue": (13.2, 2.05), "green": (14.6, 2.05)}
 FOOD_NAMES = {
     "blue": ["cookies1", "cookies2", "cookies3"],
     "green": ["lettuce1", "lettuce2", "lettuce3"],
 }
 TEST_FOOD = "cookies3"  # None = random
-
+ 
 CONVEYOR_STOP = (13.2, 2.25)  # same x as the food station, so it drives straight along y
 DEBUG = True  # print which link hits which obstacle
 BLUE_TRAY_POSITION = np.array([13.0, 2.97, 0.68])
@@ -33,14 +35,16 @@ PLACE_FOOD_Z = 0.74
 PLACE_DX = 0.17  # nudge the drop point in world x (tray mesh origin is not its centre)
 PLACE_NEAR_OFFSET = 0.04  # nudge the drop point towards the robot (world -y)
 HOVER_FOOD_Z = 0.98
+TRAY_CENTRE_UNSCALED = np.array([0.15, -0.0989120895, 0.0])  # tray middle, same as maryam_tray_delivery.py
+FOOD_ABOVE_TRAY = 0.06  # food height above the conveyor tray's base
 TURN_ANGLE = np.radians(90)  # arm turn before placing
 FOOD_PLACEMENT_TOLERANCE = 0.025
-
+ 
 PICKUP_OFFSET = 0.08
 LIFT_STEP = 0.05
 MAX_LIFT_STEPS = 5
 MAX_LIFT_SIDEWAYS = 0.06
-
+ 
 # RMRC
 DAMPING = 0.06
 GAIN = 1.5
@@ -49,64 +53,72 @@ POSITION_TOLERANCE = 0.025
 MAX_STEPS = 300
 JOINT_LIMIT_MARGIN = np.radians(2)
 JOINT_CENTRE_GAIN = 0.08
-
+ 
 # Collision
 ARM_MARGIN = 0.01
 FOOD_RADIUS = 0.035
 TURTLE_RADIUS = 0.18
 SELF_COLLISION_DISTANCE = 0.055
 CHASSIS_CLEARANCE = 0.035
-
+ 
 # Alternative paths
 PATH_CLEARANCE = 0.12
 SIDE_OFFSETS = [0.25, -0.25, 0.45, -0.45]
 HEIGHT_OFFSETS = [0.0, 0.05, 0.10]
-
+ 
 FOOD_COUNTER = CollisionBox("Food Counter", centre=(13.211, 1.478, 0.283), size=(4.601, 0.476, 0.369))
 CONVEYOR_COUNTER = CollisionBox("Conveyor Counter", centre=(13.05, 3.30, 0.35), size=(4.61, 1.53, 0.65))
 OBSTACLES = [FOOD_COUNTER, CONVEYOR_COUNTER]
 ARM_OBSTACLES = OBSTACLES  # what the arm links are checked against
-
+ 
 # ---------------- Globals ----------------
 env = objects = turtlebot = yarabot = None
 held_food = held_offset = None
 HOME_Q = None
 HOME_TURTLE_BASE = None
-
-
+ 
+ 
 def setup_yarabot(shared_env, shared_objects):
     global env, objects, turtlebot, yarabot, held_food, held_offset, HOME_Q, HOME_TURTLE_BASE
     env, objects = shared_env, shared_objects
     held_food = held_offset = None
-
+ 
     turtlebot = Turtlebot3Waffle()
     turtlebot.base = SE3(13.2, 2.0, TURTLE_Z)
     turtlebot.add_to_env(env)
-
+ 
     yarabot = YaraBot()
     yarabot.base = turtlebot.base * SE3(0, 0, MOUNT_HEIGHT)
     yarabot.add_to_env(env)
-
+ 
     HOME_Q = np.asarray(yarabot.q, dtype=float).copy()
     HOME_TURTLE_BASE = SE3(turtlebot.base.A.copy())
     env.step(DT)
-
-
+ 
+ 
 # ---------------- Helpers ----------------
+def tray_food_spot(tray):
+    """World point in the middle of a tray mesh, FOOD_ABOVE_TRAY above its base."""
+    T = SE3(np.asarray(tray.T, dtype=float))
+    scale = np.resize(np.ravel(np.asarray(getattr(tray, "scale", 1.0), dtype=float)), 3)
+    centre = T.t + T.R @ (TRAY_CENTRE_UNSCALED * scale)
+    return centre + np.array([0.0, 0.0, FOOD_ABOVE_TRAY])
+ 
+ 
 def food_position(q, offset):
     return (yarabot.fkine(q) * offset).t
-
-
+ 
+ 
 def update_food(food, offset):
     if food is not None and offset is not None:
         food.T = (yarabot.fkine(yarabot.q) * offset).A
-
-
+ 
+ 
 def set_base(position):
     turtlebot.base = SE3(*position)
     yarabot.base = turtlebot.base * SE3(0, 0, MOUNT_HEIGHT)
-
-
+ 
+ 
 def segment_distance(p1, q1, p2, q2):
     u, v, w = q1 - p1, q2 - p2, p1 - p2
     a, b, c, d, e = u @ u, u @ v, v @ v, u @ w, v @ w
@@ -118,28 +130,28 @@ def segment_distance(p1, q1, p2, q2):
     if c > 1e-12:
         t = np.clip((b * s + e) / c, 0, 1)
     return np.linalg.norm((p1 + s * u) - (p2 + t * v))
-
-
+ 
+ 
 def point_inside_box(point, box, margin=0.0):
     half = np.asarray(box.size) / 2.0 + margin
     return bool(np.all(np.abs(point - np.asarray(box.centre)) <= half))
-
-
+ 
+ 
 def joint_limits():
     limits = np.asarray(yarabot.qlim, dtype=float)
     return limits[0], limits[1]
-
-
+ 
+ 
 def joints_within_limits(q):
     lo, hi = joint_limits()
     return bool(np.all(q >= lo - 1e-8) and np.all(q <= hi + 1e-8))
-
-
+ 
+ 
 def clamp_joints(q):
     lo, hi = joint_limits()
     return np.clip(q, lo + JOINT_LIMIT_MARGIN, hi - JOINT_LIMIT_MARGIN)
-
-
+ 
+ 
 # ---------------- Collision checks ----------------
 def self_collision(q):
     p = np.asarray(get_link_positions(yarabot, q), dtype=float)
@@ -149,8 +161,8 @@ def self_collision(q):
             if segment_distance(p[i], p[i + 1], p[j], p[j + 1]) < SELF_COLLISION_DISTANCE:
                 return True
     return False
-
-
+ 
+ 
 def chassis_collision(q):
     p = np.asarray(get_link_positions(yarabot, q), dtype=float)
     base = np.asarray(turtlebot.base.t, dtype=float)
@@ -159,14 +171,14 @@ def chassis_collision(q):
         if np.linalg.norm(pos[:2] - base[:2]) < TURTLE_RADIUS and pos[2] < top - CHASSIS_CLEARANCE:
             return True
     return False
-
-
+ 
+ 
 def configuration_safe(q, food=None, offset=None, lifting=False):
     q = np.asarray(q, dtype=float)
-
+ 
     if not joints_within_limits(q):
         return False, "Joint limits"
-
+ 
     hit = check_arm_collision(yarabot, q, ARM_OBSTACLES, ARM_MARGIN, DEBUG)
     if isinstance(hit, tuple):
         hit, name = hit
@@ -174,12 +186,12 @@ def configuration_safe(q, food=None, offset=None, lifting=False):
         name = "?"
     if hit:
         return False, "Arm collision: " + str(name)
-
+ 
     if self_collision(q):
         return False, "Self collision"
     if chassis_collision(q):
         return False, "TurtleBot chassis"
-
+ 
     if food is not None and offset is not None:
         xyz = food_position(q, offset)
         for obstacle in OBSTACLES:
@@ -187,82 +199,86 @@ def configuration_safe(q, food=None, offset=None, lifting=False):
                 continue
             if point_inside_box(xyz, obstacle, FOOD_RADIUS):
                 return False, "Food collision: " + obstacle.name
-
+ 
     return True, "Safe"
-
-
+ 
+ 
 # ---------------- RMRC ----------------
 def calculate_joint_velocity(q, velocity):
     J = yarabot.jacob0(q)[:3, :]
     J_pinv = J.T @ np.linalg.inv(J @ J.T + DAMPING ** 2 * np.eye(3))
     q_dot = J_pinv @ velocity
-
+ 
     # Nullspace: drift towards joint centres
     lo, hi = joint_limits()
     centre_vel = JOINT_CENTRE_GAIN * ((lo + hi) / 2.0 - q) / np.maximum(hi - lo, 1e-6)
     q_dot += (np.eye(len(q)) - J_pinv @ J) @ centre_vel
-
+ 
     peak = np.max(np.abs(q_dot))
     if peak > MAX_JOINT_SPEED:
         q_dot *= MAX_JOINT_SPEED / peak
     return q_dot
-
-
+ 
+ 
 def plan_rmrc(target, food=None, offset=None, lifting=False):
     target = np.asarray(target, dtype=float)
     q = np.asarray(yarabot.q, dtype=float).copy()
     path = [q.copy()]
     previous_error = float("inf")
     stalled = 0
-
+ 
     for _ in range(MAX_STEPS):
         error_vector = target - yarabot.fkine(q).t
         error = np.linalg.norm(error_vector)
-
+ 
         if error < POSITION_TOLERANCE:
             return np.asarray(path)
-
+ 
         q_next = clamp_joints(q + calculate_joint_velocity(q, GAIN * error_vector) * DT)
-
+ 
         safe, reason = configuration_safe(q_next, food, offset, lifting)
         if not safe:
             print("RMRC blocked:", reason)
             return None
-
+ 
         stalled = stalled + 1 if abs(previous_error - error) < 1e-5 else 0
         if stalled > 35:
             print("RMRC stalled. Error:", round(error, 4))
             return None
-
+ 
         previous_error = error
         q = q_next
         path.append(q.copy())
-
+ 
     print("RMRC failed to converge")
     return None
-
-
+ 
+ 
 def execute_path(path, food=None, offset=None):
     if path is None:
         return False
-    for q in np.asarray(path, dtype=float):
+    path = np.asarray(path, dtype=float)
+    frames = list(path[::FRAME_SKIP])
+    if len(path) and (len(path) - 1) % FRAME_SKIP:
+        frames.append(path[-1])  # always end exactly on the last pose
+    for q in frames:
         yarabot.q = q.copy()
         update_food(food, offset)
         env.step(DT)
     return True
-
-
+ 
+ 
 # ---------------- Arm movement ----------------
 def candidate_paths(start, target):
     candidates = [[target.copy()]]
     height = max(start[2], target[2]) + PATH_CLEARANCE
-
+ 
     raised_start = start.copy()
     raised_start[2] = height
     raised_target = target.copy()
     raised_target[2] = height
     candidates.append([raised_start, raised_target, target.copy()])
-
+ 
     for side in SIDE_OFFSETS:
         for extra in HEIGHT_OFFSETS:
             h = height + extra
@@ -274,19 +290,19 @@ def candidate_paths(start, target):
             w3 = target.copy()
             w3[2] = h
             candidates.append([w1, w2, w3, target.copy()])
-
+ 
     return candidates
-
-
+ 
+ 
 def move_arm(target, food=None, offset=None):
     target = np.asarray(target, dtype=float)
     start_q = np.asarray(yarabot.q, dtype=float).copy()
     start_pos = yarabot.fkine(start_q).t.copy()
-
+ 
     for n, waypoints in enumerate(candidate_paths(start_pos, target), start=1):
         yarabot.q = start_q.copy()
         segments = []
-
+ 
         for waypoint in waypoints:
             segment = plan_rmrc(waypoint, food, offset)
             if segment is None:
@@ -294,38 +310,38 @@ def move_arm(target, food=None, offset=None):
                 break
             segments.append(segment)
             yarabot.q = segment[-1].copy()
-
+ 
         yarabot.q = start_q.copy()
-
+ 
         if segments is None:
             continue
-
+ 
         print("Using path", n)
         for segment in segments:
             execute_path(segment, food, offset)
         return True
-
+ 
     print("No valid arm path found")
     return False
-
-
+ 
+ 
 def move_arm_joints(target_q, food=None, offset=None):
     target_q = np.asarray(target_q, dtype=float)
     if not joints_within_limits(target_q):
         print("Target joints exceed limits")
         return False
-
-    trajectory = jtraj(np.asarray(yarabot.q, dtype=float), target_q, 120).q
-
+ 
+    trajectory = jtraj(np.asarray(yarabot.q, dtype=float), target_q, 60).q
+ 
     for q in trajectory:
         safe, reason = configuration_safe(q, food, offset)
         if not safe:
             print("Joint movement blocked:", reason)
             return False
-
+ 
     return execute_path(trajectory, food, offset)
-
-
+ 
+ 
 # ---------------- TurtleBot movement ----------------
 def turtle_position_safe(position):
     for obstacle in OBSTACLES:
@@ -335,114 +351,114 @@ def turtle_position_safe(position):
         if np.linalg.norm(position[:2] - nearest) < TURTLE_RADIUS:
             return False
     return True
-
-
+ 
+ 
 def move_turtlebot(x, y, food=None, offset=None):
     start_base = SE3(turtlebot.base.A.copy())
     start_arm_base = SE3(yarabot.base.A.copy())
     start = np.asarray(start_base.t, dtype=float)
     end = np.array([float(x), float(y), TURTLE_Z])
-    steps = 100
+    steps = 50
     route = [start * (1 - i / steps) + end * (i / steps) for i in range(steps + 1)]
-
+ 
     # Validate whole route first
     for position in route:
         if not turtle_position_safe(position):
             print("TurtleBot path blocked at:", np.round(position, 3))
             turtlebot.base, yarabot.base = start_base, start_arm_base
             return False
-
+ 
         set_base(position)
         safe, reason = configuration_safe(yarabot.q, food, offset)
         if not safe:
             print("TurtleBot movement blocked:", reason)
             turtlebot.base, yarabot.base = start_base, start_arm_base
             return False
-
+ 
     turtlebot.base, yarabot.base = start_base, start_arm_base
-
+ 
     # Execute
     for position in route:
         set_base(position)
         update_food(food, offset)
         env.step(DT)
-
+ 
     return True
-
-
+ 
+ 
 # ---------------- Pick ----------------
 def lift_food(food, offset):
     start_food = food_position(yarabot.q, offset)
     counter_top = FOOD_COUNTER.centre[2] + FOOD_COUNTER.size[2] / 2.0
     required_height = counter_top + FOOD_RADIUS + ARM_MARGIN
-
+ 
     if start_food[2] >= required_height:
         return True
-
+ 
     start_xy = start_food[:2].copy()
-
+ 
     for _ in range(MAX_LIFT_STEPS):
         target = yarabot.fkine(yarabot.q).t.copy()
         target[2] += LIFT_STEP
-
+ 
         path = plan_rmrc(target, food, offset, lifting=True)
         if path is None:
             return False
-
+ 
         sideways = max(np.linalg.norm(food_position(q, offset)[:2] - start_xy) for q in path)
         if sideways > MAX_LIFT_SIDEWAYS:
             print("Lift rejected: too much sideways movement")
             return False
-
+ 
         execute_path(path, food, offset)
-
+ 
         if food_position(yarabot.q, offset)[2] >= required_height:
             return True
-
+ 
     print("Food did not reach clearance height")
     return False
-
-
+ 
+ 
 def pick_food(food):
     if food is None:
         return False
-
+ 
     xyz = SE3(food.T).t.copy()
     target = xyz.copy()
     target[2] += PICKUP_OFFSET
-
+ 
     if not move_arm(target):
         print("Could not reach food")
         return False
-
+ 
     # Food transform relative to end effector
     offset = yarabot.fkine(yarabot.q).inv() * SE3(food.T)
-
+ 
     if not lift_food(food, offset):
         return False
-
+ 
     return offset
-
-
+ 
+ 
 # ---------------- Transport ----------------
-def safe_trajectory(q_a, q_b, food=None, offset=None, steps=60):
+def safe_trajectory(q_a, q_b, food=None, offset=None, steps=40):
     """Joint-space path from q_a to q_b, or None if any step is unsafe."""
     trajectory = jtraj(q_a, q_b, steps).q
     for q in trajectory:
         if not configuration_safe(q, food, offset)[0]:
             return None
     return trajectory
-
-
-def ik_food_configs(target_food, food, offset, seed_q, tries=150):
+ 
+ 
+def ik_food_configs(target_food, food, offset, seed_q, tries=IK_TRIES):
     """Yield safe joint configurations that put the FOOD at target_food."""
     rng = np.random.default_rng(1)
     lo, hi = joint_limits()
-
+ 
     for i in range(tries):
         q0 = seed_q if i == 0 else np.clip(seed_q + rng.normal(0, 0.5, len(seed_q)), lo, hi)
         target_ee = target_food - (food_position(q0, offset) - yarabot.fkine(q0).t)
-
+ 
         for _ in range(4):  # correct for the food offset rotating with the arm
             sol = yarabot.ikine_LM(SE3(*target_ee), q0=q0, mask=[1, 1, 1, 0, 0, 0])
             if not sol.success:
@@ -455,21 +471,21 @@ def ik_food_configs(target_food, food, offset, seed_q, tries=150):
                 break
             target_ee = target_ee + error
             q0 = q
-
-
+ 
+ 
 def ik_plan(q_start, hover_food, place_food, food, offset):
     """Joint-space route: start -> hover -> place, using inverse kinematics."""
-    for q_hover in islice(ik_food_configs(hover_food, food, offset, q_start), 40):
+    for q_hover in islice(ik_food_configs(hover_food, food, offset, q_start), 10):
         up = safe_trajectory(q_start, q_hover, food, offset)
         if up is None:
             continue
-        for q_place in ik_food_configs(place_food, food, offset, q_hover, tries=30):
+        for q_place in ik_food_configs(place_food, food, offset, q_hover, tries=15):
             down = safe_trajectory(q_hover, q_place, food, offset)
             if down is not None:
                 return [up, down]
     return None
-
-
+ 
+ 
 def rmrc_plan(q_start, targets, food, offset):
     """Straight-line route through each food target using RMRC."""
     segments = []
@@ -493,8 +509,8 @@ def rmrc_plan(q_start, targets, food, offset):
         return segments
     finally:
         yarabot.q = q_start.copy()
-
-
+ 
+ 
 def plan_place(q_start, hover_food, place_food, food, offset):
     """Try IK then RMRC. If the counter blocks the arm, retry without it (the tray sits on it)."""
     global DEBUG, ARM_OBSTACLES
@@ -512,8 +528,8 @@ def plan_place(q_start, hover_food, place_food, food, offset):
     finally:
         DEBUG, ARM_OBSTACLES = debug, OBSTACLES
     return None
-
-
+ 
+ 
 def turn_arm(food, offset, aim):
     """Turn joint 1 by TURN_ANGLE, in whichever direction brings the food closer to aim."""
     q = np.asarray(yarabot.q, dtype=float).copy()
@@ -525,116 +541,130 @@ def turn_arm(food, offset, aim):
         if lo[0] <= target[0] <= hi[0]:
             dist = np.linalg.norm(food_position(target, offset)[:2] - aim[:2])
             options.append((dist, target))
-
+ 
     if not options:
         print("Turn exceeds joint 1 limits")
         return False
-
+ 
     return move_arm_joints(min(options, key=lambda o: o[0])[1], food, offset)
-
-
-def transport_food(food, offset):
+ 
+ 
+def transport_food(food, offset, tray=None):
     global held_food, held_offset
-
+ 
+    # Where the food goes: middle of the conveyor tray (or the old fixed spot)
+    if tray is not None:
+        place_food = tray_food_spot(tray)
+        stop = (place_food[0], CONVEYOR_STOP[1])   # line up with the tray along the belt
+    else:
+        place_food = np.array([BLUE_TRAY_POSITION[0] + PLACE_DX, BLUE_TRAY_POSITION[1] - PLACE_NEAR_OFFSET, PLACE_FOOD_Z])
+        stop = CONVEYOR_STOP
+    print("Placing food at", np.round(place_food, 3).tolist())
+ 
     # 1. Straight up into the upright pose
     if not move_arm_joints(HOME_Q, food, offset):
         print("Could not return arm upright")
         return False
-
+ 
     # 2. Drive to the conveyor while upright
-    if not move_turtlebot(*CONVEYOR_STOP, food, offset):
+    if not move_turtlebot(*stop, food, offset):
         print("Could not reach conveyor")
         return False
-
+ 
     # 3. Turn 90 degrees to face the tray
-    if not turn_arm(food, offset, BLUE_TRAY_POSITION):
+    if not turn_arm(food, offset, place_food):
         return False
-
+ 
     # 4. Plan: up over the tray, then straight down (all collision checked)
-    place_food = np.array([BLUE_TRAY_POSITION[0] + PLACE_DX, BLUE_TRAY_POSITION[1] - PLACE_NEAR_OFFSET, PLACE_FOOD_Z])
     hover_food = place_food.copy()
     hover_food[2] = HOVER_FOOD_Z
-
+ 
     segments = plan_place(np.asarray(yarabot.q, dtype=float).copy(), hover_food, place_food, food, offset)
     if segments is None:
         print("Could not find any way to reach the tray")
         return False
-
+ 
     # 5. Execute
     for segment in segments:
         execute_path(segment, food, offset)
-
+ 
     actual = food_position(yarabot.q, offset)
     if np.linalg.norm(actual - place_food) > FOOD_PLACEMENT_TOLERANCE:
         print("Placement error too large")
         return False
-
+ 
     # 6. Release food, keeping its world transform
     food.T = (yarabot.fkine(yarabot.q) * offset).A.copy()
     held_food = held_offset = None
     env.step(DT)
-
+ 
     # 7. Retreat along the verified path, then go home
     for segment in reversed(segments):
         execute_path(segment[::-1])
     if not move_arm_joints(HOME_Q):
         print("Warning: could not return arm home")
     return True
-
-
+ 
+ 
 # ---------------- Reset / Task ----------------
 def reset_yarabot():
     if yarabot is None or turtlebot is None:
         print("YaraBot has not been set up")
         return False
-
+ 
     if held_food is not None:
         print("Cannot reset while holding food")
         return False
-
+ 
     if not move_arm_joints(HOME_Q):
         return False
-
+ 
     home = HOME_TURTLE_BASE.t
     return move_turtlebot(home[0], home[1])
-
-
-def run_task(colour):
+ 
+ 
+def run_task(colour, tray=None):
+    """tray = the tray mesh on the conveyor (None = old fixed BLUE_TRAY_POSITION)."""
     global held_food, held_offset
-
+ 
     if yarabot is None or turtlebot is None:
         print("YaraBot has not been set up")
         return False
-
+ 
     colour = str(colour).strip().lower()
     if colour not in FOOD_STATIONS:
         print("Unsupported tray colour:", colour)
         return False
-
+ 
     available = [n for n in FOOD_NAMES[colour] if n in objects]
     if not available:
         print("No food available for", colour.upper())
         return False
-
+ 
     name = TEST_FOOD if TEST_FOOD in available else random.choice(available)
     food = objects[name]
     print("Task:", colour.upper(), "->", name)
-
-    if not move_turtlebot(*FOOD_STATIONS[colour]):
+ 
+    # Stand in line with the chosen food (same y as the station, x of the food)
+    station_y = FOOD_STATIONS[colour][1]
+    food_x = float(SE3(food.T).t[0])
+    print("Food x:", round(food_x, 3), "| station x:", FOOD_STATIONS[colour][0])
+ 
+    if not move_turtlebot(food_x, station_y):
         print("Could not reach food station")
         return False
-
+ 
     offset = pick_food(food)
     if offset is False:
         print("Pickup unsuccessful")
         return False
-
+ 
     held_food, held_offset = food, offset
-
-    if not transport_food(food, offset):
+ 
+    if not transport_food(food, offset, tray):
         print("Transport unsuccessful")
         return False
-
+ 
     FOOD_NAMES[colour].remove(name)
     print("Task completed:", name)
     return True
