@@ -1,6 +1,10 @@
 import numpy as np
 from spatialmath import SE3
 from spatialgeometry import Cylinder, Cuboid
+try:
+    import E_STOP
+except ImportError:
+    from Collective_Folder import E_STOP
  
 # Each curtain is a straight line between two posts: ((x, y) post 1, (x, y) post 2)
 CURTAINS = [
@@ -73,6 +77,8 @@ class SafetyLightCurtain:
         self.env.step = guarded_step
  
     def check(self):
+        if E_STOP.active:        # robots are going home - don't check now
+            return
         inside = set()
         for i, mesh in enumerate(self.prisoners):
             x, y, z = np.asarray(mesh.T, float)[:3, 3]
@@ -88,7 +94,6 @@ class SafetyLightCurtain:
         self.muted &= inside
         new = inside - self.muted
         if new:
-            print("!!! SAFETY LIGHT CURTAIN BROKEN by:", ", ".join(new))
-            input(">>> EMERGENCY STOP - press Enter to reset... ")
+            E_STOP.stop("SAFETY LIGHT CURTAIN BROKEN by: " + ", ".join(new))
             self.muted |= inside
  

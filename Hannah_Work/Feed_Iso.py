@@ -9,6 +9,14 @@ except ImportError:
     from Class_HannahBot import HannahBot
  
 try:
+    import estop
+except ImportError:
+    try:
+        from Collective_Folder import estop
+    except ImportError:
+        estop = None
+ 
+try:
     from ir_support_extra_robots import Turtlebot3Waffle
 except ImportError:
     Turtlebot3Waffle = None
@@ -16,13 +24,14 @@ except ImportError:
 # ---------------- settings ----------------
 READY_POSE_DEG = [-157.6, 28.8, 23.5, -30.7, 142.0, 15.8]   # gripper sideways (roll 90)
 REF_POSE_DEG = [3, -31, 62, 115, -131, -2]
+HOME_POSE_DEG = READY_POSE_DEG   # emergency-stop home position (arm joints, deg)
 DECK_Z = 0.13           # TurtleBot deck height = arm base height (m)
 WORK_DISTANCE = 0.65    # arm base -> tray's near edge when picking up (m)
 START_BACK = 0.60       # robot lines up this far behind the working position (m)
 PRE_DISTANCE = 0.19    # pre-pickup point: before the tray's near edge (m)
 PICKUP_INSET = -0.09    # pickup point: relative to the near edge (m)
 LIFT = 0.05             # how far the tray is lifted, and lowered again (m)
-LEAVE_DISTANCE = -1.20   # drive this far after turning round (m)
+LEAVE_DISTANCE = 1.20   # drive this far after turning round (m)
 first_turn = -90        # turn after leaving (deg, negative = clockwise)
 Travel_1 = 8.2          # how far to drive after first_turn, for tray 1, 2, 3 (m)
 Travel_2 = 12.7
@@ -204,6 +213,23 @@ def feed_iso(env, trays, **unused):
         print(f"  error {error * 1000:.1f} mm")
         return error < TOLERANCE
  
+    # ---------------- emergency stop: go home, then come back ----------------
+    def go_home():
+        """Move the gripper to the home position. The gripper keeps its locked
+        orientation the whole way, so a tray being carried stays level."""
+        was_at = tool().t.copy()
+        home_xyz = tool(np.deg2rad(HOME_POSE_DEG)).t
+        print("HannahBot: going to home position" + (" (holding the tray level)" if held else ""))
+        arm_to(home_xyz, seconds=3.0)
+        return was_at
+ 
+    def come_back(was_at):
+        print("HannahBot: returning to where it was")
+        arm_to(was_at, seconds=3.0)
+ 
+    if estop is not None:
+        estop.register(go_home, come_back)
+ 
     # ---------------- the run ----------------
     ok = True
     update()
@@ -239,9 +265,10 @@ def feed_iso(env, trays, **unused):
  
         # Carry it: remember each corner so the way back can retrace it
         route = []
+        turn(180)
         drive(LEAVE_DISTANCE)
-        turn(90)
         route.append((robot["x"], robot["y"]))
+        turn(first_turn)
         travel = TRAVELS[i] if i < len(TRAVELS) else TRAVELS[-1]
         if walls is not None and walls.test_ball and i == 0:   # test: ball in the hallway
             ahead = np.array([np.cos(robot["yaw"]), np.sin(robot["yaw"])]) * travel * BALL_ALONG

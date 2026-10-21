@@ -2,6 +2,10 @@ import numpy as np
 import xml.etree.ElementTree as ET
 from spatialmath import SE3
 from spatialgeometry import Cuboid
+try:
+    import E_STOP
+except ImportError:
+    from Collective_Folder import E_STOP
  
 ISO_PARTS = ["ISO_cell1", "ISO_cell2", "ISO_cell3",
              "backWall", "backWall2", "LeftWall", "rightWall", "HannahCounter"]
@@ -175,6 +179,8 @@ class WallCollision:
         self.env.step = guarded_step
  
     def check(self):
+        if E_STOP.active:        # robots are going home - don't check now
+            return
         hits = set()
         for name, pts, r in self.points():
             for wall, lo, hi in self.boxes:
@@ -186,8 +192,6 @@ class WallCollision:
         self.muted &= hits
         new = hits - self.muted
         if new:
-            for name, wall in new:
-                print(f"!!! COLLISION: {name} hit {wall}")
-            input(">>> EMERGENCY STOP - press Enter to reset... ")
+            E_STOP.stop("COLLISION: " + ", ".join(f"{n} hit {w}" for n, w in new))
             self.muted |= hits
  
