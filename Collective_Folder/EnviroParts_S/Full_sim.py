@@ -7,6 +7,7 @@ import swift
 import swift.SwiftRoute as swift_route
 from spatialgeometry import Mesh
 from spatialmath import SE3
+from ir_support_extra_parts.parts import part_mesh
 from math import pi
 
 assignment_folder = Path(__file__).resolve().parents[2]
@@ -199,7 +200,7 @@ def create_environment(env):
 
     backWall_meal = add_mesh(
         "backWall_meal", meal_folder, "bakcWall.dae",
-        x=14.9, y=1.267, z=-0.06
+        x=14.9, y=1.23, z=-0.06
     )
 
     botCounter = add_mesh(
@@ -259,7 +260,7 @@ def create_environment(env):
 
     kitchen = add_mesh(
         "kitchen", meal_folder, "kitchen.dae",
-        x=13.2, y=1.4, z=0.3
+        x=13.2, y=1.47, z=0.3
     )
 
     ledtBars = add_mesh(
@@ -372,8 +373,8 @@ def create_environment(env):
         scale = 0.3
     )
     nuggets = add_mesh(
-        "nuggets", Food_folder, "3nuggets.dae",
-        x=0.06, y=0, z=0
+        "nuggets", Food_folder, "nuggets2.dae",
+        x=1.4, y=0.02, z=0.26
     )
 
     papertowel1 = add_mesh(
@@ -381,6 +382,41 @@ def create_environment(env):
         x = 12.8, y=4.5, z=0.76,
         rx = pi/2
     )
+
+        # Emergency Stop Button
+    emergency_stop = part_mesh("emergencyStopButton")
+    emergency_stop.scale= [0.5, 0.5, 0.5]
+
+    emergency_stop.T = SE3(15.38, 1.5, 1.3) * SE3.Ry(-pi/2)
+
+    env.add(emergency_stop)
+
+    objects["emergency_stop"] = emergency_stop
+
+    emergency_stop2 = part_mesh("emergencyStopButton")
+
+    emergency_stop2.scale = [0.5, 0.5, 0.5]
+
+    emergency_stop2.T = SE3(9.4, 5, 0.85) * SE3.Ry(-pi/2)
+
+    env.add(emergency_stop2)
+
+    objects["emergency_stop2"] = emergency_stop2
+
+    safety_gate = part_mesh("SafetyGate")
+
+    safety_gate.scale = [0.8, 0.8, 0.8]
+
+    safety_gate.T = SE3(16.15, 2.15, 0.05) * SE3.Rz(-pi/2)
+    env.add(safety_gate)
+
+    objects["safety_gate"] = safety_gate
+
+    safety_railing = part_mesh("SafetyRailing")
+    safety_railing.scale = [0.3, 0.5, 0.5]
+    safety_railing.T = SE3(11, 2.2, 0) * SE3.Rz(-pi/2)
+    env.add(safety_railing)
+
 
     return objects
 
