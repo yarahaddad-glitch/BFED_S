@@ -1,3 +1,6 @@
+Shared workcell setup, teammate tasks and collision-check integration:
+[Team tasks and run guide](documents/TEAM_TASKS_AND_RUN.md).
+
 project description:
   Our project proposes an automated robotic meal preparation and distribution system for a prison environment. 
   Colour-coded trays are used to represent different dietary requirements, such as vegetarian meals. 
@@ -8,7 +11,7 @@ project description:
 
 Robots:
   virtual robots:
-    - Hanwha HCR-5 (Maryam)
+    - Kawasaki RS007N (Maryam)
     - Elite Robots EC66 (Yara)
     - Techman TM5-900 (Hannah)
 

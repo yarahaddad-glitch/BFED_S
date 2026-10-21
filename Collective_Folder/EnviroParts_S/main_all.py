@@ -12,12 +12,15 @@ for folder in (ASSIGNMENT_ROOT, ASSIGNMENT_ROOT / "Collective_Folder"):
 # Meal system (Maryam / Yara / ReBot)
 from Maryam_Work.maryam_meal_dispatch import ColourScanner, build_default_dispatcher
 from Maryam_Work.maryam_movements import build_scene
-from Collective_Folder.integrated_meal import IntegratedMeal
+from Collective_Folder.integrated_meal import IntegratedMeal, yara
  
  
 # Hannah
 from Hannah_Work.wall_collision import WallCollision
 from Hannah_Work.Feed_Iso import feed_iso
+from Collective_Folder.workcell_runtime import WorkcellRuntime, WorkcellClosed
+from Collective_Folder.safety_tests import SafetyDemonstration
+from Collective_Folder.maryam_collision_demo import MaryamCollisionDemo
  
 DT = 0.05
  
@@ -33,12 +36,13 @@ JOB_TIMEOUT = 0.5      # longest the kitchen waits for feed_iso / prisoners each
 # LOCK-STEP: background jobs take one step each time the scene steps
 # ============================================================
 class LockStep:
-    def __init__(self, env):
+    def __init__(self, env, runtime=None):
         self.env = env
         self.real_step = env.step
         self.jobs = {}                    # thread -> job info
         self.turn = threading.RLock()     # only one thing touches the scene at a time
         self.kitchen_idle = False
+        self.runtime = runtime
         env.step = self.step
  
     def add_job(self, name, fn):
@@ -51,6 +55,8 @@ class LockStep:
                 print(f"[{name}] finished", flush=True)
             except Exception as exc:
                 print(f"[{name}] stopped: {exc!r}", flush=True)
+                if self.runtime:
+                    self.runtime.request_stop(f"{name}: {exc}")
             job["done"] = True
             job["back"].set()                         # hand the turn back for good
  
@@ -66,15 +72,24 @@ class LockStep:
             job["go"].wait(); job["go"].clear()
             return None
         with self.turn:
+            if self.runtime:
+                self.runtime.checkpoint()
             result = self.real_step(dt, *args, **kwargs)    # draw the frame once
             for job in list(self.jobs.values()):
                 if not job["done"]:
                     job["go"].set()                         # let this job do ONE step
                     if job["back"].wait(timeout=JOB_TIMEOUT):
                         job["back"].clear()
-                    elif not job.get("warned"):
-                        job["warned"] = True                # never let a job freeze the kitchen
-                        print(f"[{job['name']}] slow to hand back - kitchen carries on", flush=True)
+                    else:
+                        if self.runtime:
+                            self.runtime.request_stop(f"{job['name']} missed its step deadline")
+                        # Do not advance another frame concurrently with a late job.
+                        while not job['back'].wait(0.05):
+                            if self.runtime and self.runtime.closed:
+                                raise WorkcellClosed()
+                        job['back'].clear()
+                    if self.runtime:
+                        self.runtime.checkpoint()
             return result
  
     def jobs_running(self):
@@ -83,12 +98,15 @@ class LockStep:
     def start_idle_ticker(self):
         """Keep the background jobs moving while the kitchen waits on the camera."""
         def tick():
-            while True:
-                if self.kitchen_idle and self.jobs_running():
-                    self.step(DT)
-                    time.sleep(IDLE_GAP)      # give the camera window time to draw
-                else:
-                    time.sleep(DT)
+            try:
+                while not self.runtime or not self.runtime.closed:
+                    if self.kitchen_idle:
+                        self.step(DT)
+                        time.sleep(IDLE_GAP)
+                    else:
+                        time.sleep(DT)
+            except WorkcellClosed:
+                pass
         threading.Thread(target=tick, daemon=True).start()
  
  
@@ -101,6 +119,9 @@ tray_handed_out = threading.Event()     # set when the kitchen hands the tray ov
  
  
 def prisoner1_job(env, objects):
+    # HANNAH: replace this walking animation / add the other prisoners here.
+    # main() schedules this job ONLY AFTER the operator presses Start.
+    # Yield with env.step(DT) each animation frame to share the same scene.
     mesh = objects["prisoner1"]
     T = np.array(mesh.T, float)
     start, forward = T[:3, 3].copy(), T[:3, 0]
@@ -133,11 +154,16 @@ def run_orders(scanner, dispatcher, movements, sync):
         sync.kitchen_idle = True                  # camera waiting: others keep moving
         result = dispatcher.handle(scanner.scan())
         sync.kitchen_idle = False
+        if sync.runtime:
+            with sync.turn:
+                sync.runtime.checkpoint()
  
         if result.action == "CANCELLED":
             print("Camera cancelled - meals finished.", flush=True)
             break
         if result.action == "ALERT":
+            if sync.runtime:
+                sync.runtime.log('Yellow detected: no tray')
             print("Yellow detected: no tray sent. Show GREEN or BLUE, or press Q to finish.",
                   flush=True)
             continue
@@ -147,13 +173,17 @@ def run_orders(scanner, dispatcher, movements, sync):
  
         order = result.order
         colour = order.tray.colour
+        if sync.runtime:
+            sync.runtime.log(f'{colour.capitalize()} detected')
         print(f"[MEAL] Starting {colour}: Maryam pickup, Yara food, ReBot towel, handout.", flush=True)
         try:
             with sync.turn:                       # kitchen holds the scene while it moves
                 served = movements.serve(colour, lambda: dispatcher.mark_on_conveyor(order))
         except RuntimeError as exc:
             print(f"[STOPPED] {exc}. Meal is not marked delivered.", flush=True)
-            break
+            if sync.runtime:
+                sync.runtime.request_stop(str(exc))
+            raise
         if served:
             tray_handed_out.set()                 # prisoner 1 has their tray
             dispatcher.mark_delivered(order)
@@ -164,58 +194,114 @@ def run_orders(scanner, dispatcher, movements, sync):
 # ============================================================
 # MAIN
 # ============================================================
-def main():
-    sys.setswitchinterval(0.001)    # switch threads often so the camera never starves
-    # ---- ONE scene, everything loaded BEFORE anything moves ----
-    env, objects, robot, trays = build_scene()
-    print("[MAIN] scene built", flush=True)
- 
-    yellow_trays = [objects["yellowTray1"], objects["yellowTray2"], objects["yellowtray3"]]
-    walls = None
-    if USE_WALLS:
-        walls = WallCollision(env, objects)
-        walls.watch_trays(yellow_trays)
-        walls.test_ball_in_path()
-        walls.arm()
- 
-    remove_prisoner(env, objects, "prisoner2")
-    movements = IntegratedMeal(env, objects, robot, trays)   # kitchen robots loaded now
-    env.step(DT)
- 
-    # Open the camera FIRST, before anything else is running
-    print("[KITCHEN] opening camera...", flush=True)
-    scanner = ColourScanner()
-    print("[KITCHEN] camera ready", flush=True)
- 
-    # ---- Lock-step: feed_iso + prisoners take a step every time the scene steps ----
-    sync = LockStep(env)
-    if RUN_FEED_ISO:
-        sync.add_job("FEED ISO", lambda: feed_iso(env, yellow_trays, walls=walls))
-    if RUN_PRISONERS:
-        sync.add_job("PRISONER 1", lambda: prisoner1_job(env, objects))
-    print("[MAIN] background jobs started", flush=True)
- 
-    # Give HannahBot a few steps on its own so it loads in fully before the kitchen starts
-    for _ in range(5):
-        env.step(DT)
-    print("[MAIN] warm-up done", flush=True)
-    sync.start_idle_ticker()
- 
-    # ---- Kitchen (camera must stay on the main thread) ----
-    print("[KITCHEN] show a colour card to the camera", flush=True)
+def run_workcell(runtime, bridge):
+    """Build once on the scene thread; Qt owns all desktop/camera widgets."""
+    env = None
     try:
-        run_orders(scanner, build_default_dispatcher(), movements, sync)
+        import asyncio
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        env, objects, robot, trays = build_scene()
+        runtime.env, runtime.objects = env, objects
+        yellow_trays = [objects["yellowTray1"], objects["yellowTray2"], objects["yellowtray3"]]
+        from Collective_Folder import E_STOP
+        # WallCollision imports the top-level alias on this entry path.
+        import E_STOP as wall_estop
+        E_STOP.set_stop_callback(runtime.request_stop)
+        wall_estop.set_stop_callback(runtime.request_stop)
+        walls = None
+        if USE_WALLS:
+            walls = WallCollision(env, objects)
+            walls.watch_trays(yellow_trays)
+            walls.test_ball_in_path()
+            walls.arm()
+        remove_prisoner(env, objects, "prisoner2")
+        movements = IntegratedMeal(env, objects, robot, trays, activity=runtime.log)
+        runtime.collision = MaryamCollisionDemo(runtime, movements)
+        robots = {"MaryamBot": robot, "YaraBot": yara.yarabot, "ReBot": movements.rebot}
+        hannah_run = None
+        if RUN_FEED_ISO:
+            hannah, turtle, hannah_run = feed_iso(
+                env, yellow_trays, walls=walls, prepare_only=True, activity=runtime.log)
+            robots["HannahBot"] = hannah
+        # HANNAH: unsafe-zone/light-curtain monitoring is separate from WallCollision.
+        runtime.safety = SafetyDemonstration(env, objects, runtime)
+        runtime.safety.arm()
+        env.step(DT)  # Flush all robot and scene geometry before reporting Ready.
+        runtime.robots = robots
+        # TEAM: register collision predicates in workcell_actions.install_collision_checks.
+        from Collective_Folder import workcell_actions
+        workcell_actions.install_collision_checks(runtime)
+        queue_check = movements.controller.extra_valid
+        movements.controller.extra_valid = lambda q:queue_check(q) and runtime.configuration_clear('MaryamBot', q)
+        movements.delivery.payload_check = lambda q, pose:runtime.configuration_clear('MaryamBot', q, pose)
+        movements.delivery.configuration_guard = lambda q, pose:runtime.guard_configuration('MaryamBot', q, pose)
+        for name, model in robots.items():
+            model.configuration_guard = lambda q, n=name:runtime.guard_configuration(n, q)
+        yara.team_collision_check = lambda q:runtime.configuration_clear('YaraBot', q)
+        validators = {
+            "MaryamBot": movements.controller.valid,
+            "YaraBot": lambda q: yara.configuration_safe(q)[0],
+        }
+        bridge.attach(env, robots, runtime, env.step, validators)
+        sync = LockStep(env, runtime)
+        with runtime.condition:
+            if runtime.state != 'ESTOP':
+                runtime.set_state("READY", "Shared Swift scene and all robots loaded. Press Start.")
+        runtime.checkpoint()  # No camera, prisoner or automatic motion before Start.
+        tray_handed_out.clear()
+        if hannah_run:
+            sync.add_job("FEED ISO", hannah_run)
+        if RUN_PRISONERS:
+            # HANNAH: add/replace prisoner animation jobs here. They start after START.
+            sync.add_job("PRISONER 1", lambda: prisoner1_job(env, objects))
+        sync.start_idle_ticker()
+        run_orders(runtime, build_default_dispatcher(), movements, sync)
+        tray_handed_out.set()
+        sync.kitchen_idle = False
+        while sync.jobs_running():
+            env.step(DT)
+        runtime.set_state("COMPLETE", "Sequence finished. Manual controls remain available.")
+        runtime.checkpoint()  # Keep the existing scene alive and service manual commands.
+    except WorkcellClosed:
+        pass
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        runtime.fail(f"Workcell failed: {exc}. Relaunch after correcting the fault.")
+        with runtime.condition:
+            while not runtime.closed:
+                runtime.condition.wait(timeout=0.1)
     finally:
-        scanner.close()
- 
-    # ---- Kitchen done: keep stepping until HannahBot and the prisoners finish ----
-    tray_handed_out.set()             # no more meals: don't leave prisoner 1 waiting forever
-    sync.kitchen_idle = False
-    while sync.jobs_running():
-        env.step(DT)
-    env.hold()
- 
- 
+        if env is not None and runtime.closed:
+            try:
+                env.close()
+            except Exception:
+                pass
+
+
+def main():
+    from PySide6.QtWidgets import QApplication
+    gui_folder = ASSIGNMENT_ROOT / "Collective_Folder/MealBot_GUI/MealBot_GUI/MealBot_GUI"
+    sys.path.insert(0, str(gui_folder))
+    from main_gui import MainWindow
+    from theme import apply_theme
+    from camera_scanner import CameraScanner
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    apply_theme(app)
+    runtime = WorkcellRuntime()
+    window = MainWindow(runtime=runtime)
+    camera = CameraScanner(runtime, window)
+    window.camera_scanner = camera
+    window.show()
+    worker = threading.Thread(target=run_workcell, args=(runtime, window.bridge), daemon=True)
+    worker.start()
+    app.aboutToQuit.connect(runtime.close)
+    app.aboutToQuit.connect(camera.release)
+    app.exec()
+    runtime.close()
+    worker.join(timeout=1.0)
+
+
 if __name__ == "__main__":
     main()
- 

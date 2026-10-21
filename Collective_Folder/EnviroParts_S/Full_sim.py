@@ -16,7 +16,7 @@ if str(assignment_folder) not in sys.path:
 
 from Maryam_Work.Maryam_robotclass import MaryamBot
 
-ROBOT_BASE_X = 14.5  # Moving marayms robot and trays 
+ROBOT_BASE_X = 14.8  # Clear the serving tray envelope beside the fixed robot housing.
 ROBOT_FORWARD_Y = -0.05 # maryamas robot movin forward 
 
 TRAY_Y_OFFSET_FROM_BENCH = 0.0

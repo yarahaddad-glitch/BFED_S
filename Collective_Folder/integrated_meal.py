@@ -44,7 +44,8 @@ def carry_tray_route(env, tray, route, riders=(), clearance=None):
 
 
 class IntegratedMeal(MaryamMovements):
-    def __init__(self, env, objects, robot, trays):
+    def __init__(self, env, objects, robot, trays, activity=None):
+        self.activity = activity or (lambda message: None)
         super().__init__(env, objects, robot, trays)
         yara.setup_yarabot(env, objects)
         self.food_bottom = {}
@@ -87,6 +88,7 @@ class IntegratedMeal(MaryamMovements):
         if not self.towels or not yara.FOOD_NAMES.get(colour):
             raise RuntimeError(f"No towel or {colour} food available")
         key, tray = pick
+        self.activity(f'MaryamBot: picking up {colour} tray')
         outcome = self.pickups[colour](tray, key)
         if outcome.status != "PLACED":
             raise RuntimeError(f"Pickup failed: {outcome.message}")
@@ -111,6 +113,7 @@ class IntegratedMeal(MaryamMovements):
         print("[BELT] Travelling to Yara's food station.", flush=True)
         travel([(right, near_y), (right, far_y), (YARA_STOP_X, far_y)])
         before = list(yara.FOOD_NAMES[colour])
+        self.activity(f'YaraBot: placing food on {colour} tray')
         if not yara.run_task(colour, tray=tray, food_bottom_centre=self.food_bottom[colour]):
             raise RuntimeError("Yara could not complete food placement")
         riders = [self.objects[n] for n in before if n not in yara.FOOD_NAMES[colour]]
@@ -120,11 +123,14 @@ class IntegratedMeal(MaryamMovements):
         travel([(left, far_y), (left, near_y), (REBOT_STOP_X, near_y)], riders)
         towel = self.towels[-1]
         drop = SE3(tray.T) * SE3(*(TRAY_CENTRE_UNSCALED * TRAY_SCALE + [0.17, 0, 0.045]))
+        self.activity(f'ReBot: placing towel on {colour} tray')
         place_towel(self.env, self.rebot, towel, drop)
         self.towels.pop()
         riders.append(towel)
         print("[BELT] Returning loaded tray to Maryam.", flush=True)
         travel([(start[0], near_y)], riders)
         self.delivery.payload = [(r, SE3(tray.T).inv() * SE3(r.T)) for r in riders]
+        self.activity(f'MaryamBot: handing out {colour} tray')
         self.handouts[colour](tray, key)
+        self.activity(f'{colour.capitalize()} tray delivered')
         return True

@@ -71,12 +71,14 @@ env = objects = turtlebot = yarabot = None
 held_food = held_offset = None
 HOME_Q = None
 HOME_TURTLE_BASE = None
+team_collision_check = None
 
 
 def setup_yarabot(shared_env, shared_objects):
-    global env, objects, turtlebot, yarabot, held_food, held_offset, HOME_Q, HOME_TURTLE_BASE
+    global env, objects, turtlebot, yarabot, held_food, held_offset, HOME_Q, HOME_TURTLE_BASE, team_collision_check
     env, objects = shared_env, shared_objects
     held_food = held_offset = None
+    team_collision_check = None
 
     turtlebot = Turtlebot3Waffle()
     turtlebot.base = SE3(13.2, 2.0, TURTLE_Z)
@@ -162,6 +164,9 @@ def chassis_collision(q):
 
 def configuration_safe(q, food=None, offset=None, lifting=False):
     q = np.asarray(q, dtype=float)
+    check = globals().get('team_collision_check')
+    if check and not check(q):
+        return False, 'Team collision check'
 
     if not joints_within_limits(q):
         return False, "Joint limits"
@@ -245,6 +250,9 @@ def execute_path(path, food=None, offset=None):
     if path is None:
         return False
     for q in np.asarray(path, dtype=float):
+        guard = getattr(yarabot, 'configuration_guard', None)
+        if guard:
+            guard(q)
         yarabot.q = q.copy()
         update_food(food, offset)
         env.step(DT)

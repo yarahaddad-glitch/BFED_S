@@ -27,7 +27,11 @@ def animate_joints(robot, env, target, item=None, attachment=None):
     start = robot.q.copy()
     target = np.asarray(target, dtype=float).reshape(6)
     for u in np.linspace(0, 1, STEPS):
-        robot.q = start + (3 * u**2 - 2 * u**3) * (target - start)
+        proposed = start + (3 * u**2 - 2 * u**3) * (target - start)
+        guard = getattr(robot, 'configuration_guard', None)
+        if guard:
+            guard(proposed)
+        robot.q = proposed
         if item is not None:
             item.T = (tool_pose(robot) * attachment).A
         env.step(DT)

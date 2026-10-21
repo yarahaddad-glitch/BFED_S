@@ -1,1 +1,59 @@
+# MaryamBot: Kawasaki RS007N
 
+Owner: Maryam. Tutor approval / catalogue checks: record the tutor, date and result.
+
+## Sources
+
+- Kawasaki installation/connection manual, section 3.2 (RS007N dimensions and ranges):
+  https://robotics.kawasaki.com/userAssets1/productPDF/RS007-Installation_and_Connection_Manual-E.pdf
+- Official RS007N-B specification drawing:
+  https://kawasakirobotics.com/uploads/sites/2/2022/01/RS007N-B-E.pdf
+
+The manufacturer documents a six-axis arm and 360, 355, 375 and 78 mm dimensions.
+The following is the project's own standard-DH frame assignment, not a DH table
+published by Kawasaki. Reconcile the frame sketch and mesh joint axes with these
+dimensions during validation.
+
+## Implemented parameters
+
+Units: metres and radians in Python. The GUI presents joint angles in degrees.
+`A_i = Rz(theta_i) Tz(d_i) Tx(a_i) Rx(alpha_i)`.
+
+| Joint | d (m) | a (m) | alpha (deg) | theta expressed using GUI q (deg) | Mechanical q range (deg) |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 0.360 | 0 | 90 | -q1 - 90 | -180 to 180 |
+| 2 | 0 | 0.355 | 0 | q2 + 90 | -135 to 135 |
+| 3 | 0 | 0 | 90 | -q3 + 90 | -155 to 155 |
+| 4 | 0.375 | 0 | 90 | q4 + 180 | -200 to 200 |
+| 5 | 0 | 0 | -90 | -q5 | -125 to 125 |
+| 6 | 0.078 | 0 | 0 | q6 + 90 | -360 to 360 |
+
+Joint signs and offsets are deliberate model conventions (`flip=True` on 1, 3, 5).
+Mechanical ranges match the cited specification; smaller software ranges and the
+controller's margin restrict the simulated task further.
+
+Mesh assets are `Maryam_Work/RS007N-BASE.STL` and `RS007N-J1.STL` through `J6.STL`.
+Record their actual origin, CAD editing work, units and attribution here before
+submission. `meshes_are_global_at_home=True` means the assets share the zero-pose
+CAD frame; each moving mesh is then transformed by its corresponding joint chain.
+
+`Full_sim.add_maryam_robot` applies the world mounting transform. The current X
+mounting coordinate is 14.8 m in the scene, providing clearance beside the serving
+tray; it is a workcell placement, not a change to the robot's kinematic dimensions.
+
+## Validation/evidence to add
+
+1. Draw and label the six DH frames, sign conventions, zero pose and tool frame.
+2. Compare FK with independent CAD/mesh flange locations at zero and several
+   single-joint and mixed configurations. Report position/orientation errors.
+3. Solve IK for several reachable targets; show the FK residuals and limit checks.
+4. Verify mesh proportions, pivot alignment and reach against the source drawing.
+5. Demonstrate a tutor-supplied final joint configuration and discuss unreachable
+   or unsafe requests. Show the safe rejection, not a jump to an unchecked pose.
+6. Record model eligibility and tutor approval. The local catalogue search is only
+   supporting evidence; confirm the current Canvas catalogue separately.
+7. Explain the approximate collision boxes, the fixed-base correction, what is
+   still unchecked (including full self-collision) and the obstacle/recovery test.
+
+Do not label these checks complete until you have recorded the numerical results
+and can personally explain and demonstrate them.

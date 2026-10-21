@@ -1,13 +1,23 @@
 _handlers = []
 active = False          # True while an emergency stop is being handled
- 
- 
+_stop_callback = None
+
+
+def set_stop_callback(callback):
+    """Shared GUI integration; the runtime owns reset and separate resume."""
+    global _stop_callback
+    _stop_callback = callback
+
+
 def register(home, resume):
     _handlers.append((home, resume))
- 
- 
+
+
 def stop(message):
     global active
+    if _stop_callback is not None:
+        _stop_callback(message)
+        return
     if active:                      # already stopping - ignore further alarms
         return
     active = True
@@ -21,4 +31,3 @@ def stop(message):
         print("Restarted.")
     finally:
         active = False
- 

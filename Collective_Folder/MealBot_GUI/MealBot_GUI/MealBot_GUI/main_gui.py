@@ -1,35 +1,28 @@
-"""Smart MealBot -- compact simulation-only GUI with robot camera focus.
+"""GUI for main_all's shared workcell; standalone execution uses that entry point.
 
-Standalone mode: run this file beside robot_bridge.py, system_manager.py,
-manual_mode.py and theme.py. Joint jogging remains in the existing ManualMode.
-
-When integrated into the SAME Python process as a running Swift scene, attach
-that scene and its real robot objects to enable camera following:
-
-    window = MainWindow()
-    window.attach_swift_scene(env, {
-        "Maryam": maryam_robot,
-        "Yara": yara_robot,
-        "Hannah": hannah_robot,
-    })
-
-This camera feature only moves the Swift VIEWER; it does not read camera
-pixels, create another Swift instance, or control the robots or real hardware.
+Qt owns desktop widgets and the colour scanner. Scene commands are queued to
+the simulation thread. Physical safety and recovery belong to workcell_actions.
 """
 
 import sys
+from pathlib import Path
+
+PROJECT_ROOT = next(p for p in Path(__file__).resolve().parents if (p / 'Maryam_Work').is_dir())
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QMainWindow, QMessageBox, QPushButton, QScrollArea, QStackedWidget,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget, QPlainTextEdit,
 )
 
 from robot_bridge import RobotBridge
 from system_manager import SystemManager
 from manual_mode import ManualMode
 from theme import apply_theme
+from scaled_panel import ScaledPanel
 
 
 # Builds on your existing purple theme without changing ManualMode.
@@ -93,9 +86,11 @@ QPushButton#cameraAction {
 # The focus distance is relative to each robot's actual world coordinates,
 # not a hard-coded workcell centre. Feel free to adjust these per robot.
 CAMERA_OFFSETS = {
-    "Maryam": (1.7, -1.8, 1.2),
-    "Yara": (1.5, -1.7, 1.1),
-    "Hannah": (1.5, -1.7, 1.1),
+    "Maryam": (-1.1, -1.75, 0.8),
+    # +Y keeps the viewpoint inside the meal area, in front of the wall at Y=1.23.
+    "Yara": (0.9, 1.1, 1.25),
+    "Hannah": (0.15, -0.35, 2.8),
+    "ReBot": (0.9, -1.1, 0.8),
 }
 
 
@@ -109,16 +104,16 @@ def _xyz(pose):
     return [float(pose[i]) for i in range(3)]
 
 
-def _camera_pose_for_robot(robot, name):
+def _camera_pose_for_robot(robot, name, near_robot=None):
     """Compute a viewpoint centred between the robot base and end effector.
 
     Accepts standard Robotics Toolbox DH/ERobot models. Also accepts a Swift
     handle with a .robot or .model reference and a .q joint-state vector.
     """
     model = robot
-    if not callable(getattr(model, "fkine", None)):
+    if not callable(getattr(model, "fkine", None)) and name != 'ReBot':
         model = getattr(robot, "robot", None) or getattr(robot, "model", None)
-    if model is None or not callable(getattr(model, "fkine", None)):
+    if model is None or (not callable(getattr(model, "fkine", None)) and name != 'ReBot'):
         raise ValueError("Robot must provide fkine(q), or a model/robot with fkine(q).")
 
     base_pose = getattr(model, "base", None)
@@ -126,12 +121,21 @@ def _camera_pose_for_robot(robot, name):
         raise ValueError("Robot model has no world base pose for camera focus.")
     base = _xyz(base_pose)
 
+    if name == 'Hannah':
+        # Follow above the mobile base, independent of arm extension or base yaw.
+        look_at = [base[0], base[1], base[2] + 0.45]
+        return [base[i] + CAMERA_OFFSETS[name][i] for i in range(3)], look_at
+
     q = getattr(robot, "q", None)
     if q is None:
         q = getattr(model, "q", None)
     if q is None:
         raise ValueError("Robot has no live joint configuration q.")
-    tip = _xyz(model.fkine(q))
+    if name == 'ReBot':
+        links = model.get_link_transforms(q)
+        tip = _xyz(model.base * model.get_gripper_transforms(links, model.gripper_opening)[0])
+    else:
+        tip = _xyz(model.fkine(q))
 
     # Tracking the arm centre produces less camera jitter than locking to the
     # gripper alone while still following the movement of the full arm.
@@ -139,6 +143,10 @@ def _camera_pose_for_robot(robot, name):
     look_at[2] = max(look_at[2], base[2] + 0.25)
     offset = CAMERA_OFFSETS[name]
     position = [look_at[i] + offset[i] for i in range(3)]
+    if name == 'Maryam' and near_robot is not None:
+        anchor = _xyz(near_robot.base)
+        position = [anchor[0], max(anchor[1] + 0.5, 1.9),
+                    max(anchor[2] + 1.5, look_at[2] + 0.35)]
     return position, look_at
 
 
@@ -193,14 +201,20 @@ def status_row(name, value, tooltip=""):
 class MainWindow(QMainWindow):
     """Small top-left overlay for a single shared Swift scene."""
 
-    def __init__(self, env=None, robots=None):
+    def __init__(self, env=None, robots=None, runtime=None):
         super().__init__()
         self.setWindowTitle("Smart MealBot | Compact Controls")
-        self.resize(365, 270)
-        self.setMinimumSize(345, 255)
+        self.resize(350, 400)
+        self.setMinimumSize(280, 320)
+        self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
 
-        self.bridge = RobotBridge()        # No changes to working joint code.
-        self.system = SystemManager()     # Original simulation latch retained.
+        self.bridge = RobotBridge()
+        self.system = SystemManager()
+        self.runtime = runtime
+        self.system.runtime = runtime
+        self.last_activity = 0
+        self.last_safety_alert = 0
+        self.safety_warning = None
 
         # Camera binding is explicit: there is no fake video/camera feed.
         self.swift_env = None
@@ -242,25 +256,29 @@ class MainWindow(QMainWindow):
 
         self.pages.addWidget(self.make_dashboard())
         self.pages.addWidget(compact_scroll(self.make_automatic_page()))
-        self.pages.addWidget(compact_scroll(ManualMode(self.bridge, self.system)))
+        self.manual_page = ManualMode(self.bridge, self.system, host=self)
+        self.pages.addWidget(compact_scroll(self.manual_page))
         self.pages.addWidget(compact_scroll(self.make_collision_page()))
         self.pages.addWidget(compact_scroll(self.make_recovery_page()))
         self.pages.addWidget(compact_scroll(self.make_plc_page()))
         self.pages.addWidget(self.make_camera_page())  # REPLACES Event Log.
+        self.pages.addWidget(compact_scroll(self.make_safety_page()))
 
         self.nav_buttons = []
-        for index, name in enumerate((
-            "⌂  Dashboard", "▶  Automatic", "🎮  Manual", "🛡  Collision",
-            "🔒  Emergency", "🔌  PLC", "📷  Camera Mode",
-        )):
+        self.nav_page_indices = []
+        for name, index in (('Dashboard', 0), ('Automatic', 1), ('Manual', 2),
+                            ('Camera', 6), ('Collision tests', 3), ('Safety tests', 7),
+                            ('PLC', 5), ('Emergency stop', 4)):
             button = QPushButton(name)
             button.setObjectName("navButton")
+            button.setStyleSheet('font-size: 10px; padding: 1px 3px;')
             button.setFixedHeight(19)
             button.clicked.connect(
                 lambda checked=False, page_index=index: self.navigate(page_index)
             )
             left.addWidget(button)
             self.nav_buttons.append(button)
+            self.nav_page_indices.append(index)
 
         left.addStretch(1)
         self.state = QLabel("● READY")
@@ -279,6 +297,17 @@ class MainWindow(QMainWindow):
         self.system.changed.connect(self.on_state)
         self.navigate(0)
         self.on_state(self.system.state)
+        self.poll_timer = QTimer(self)
+        self.poll_timer.setInterval(100)
+        self.poll_timer.timeout.connect(self.poll_runtime)
+        self.poll_timer.start()
+
+        # One transform scales fonts, spacing, buttons, sliders and their hit areas.
+        # Resizing the outer window preserves the panel's proportions.
+        self.takeCentralWidget()
+        root.setParent(None)
+        self.scaled_panel = ScaledPanel(root, self)
+        self.setCentralWidget(self.scaled_panel)
 
         if env is not None:
             self.attach_swift_scene(env, robots or {})
@@ -298,7 +327,7 @@ class MainWindow(QMainWindow):
         heading.setObjectName("heading")
         layout.addWidget(heading)
 
-        subtitle = QLabel("Simulation  •  Group integration pending")
+        subtitle = QLabel("One shared Swift workcell")
         subtitle.setObjectName("dashboardSubtitle")
         layout.addWidget(subtitle)
 
@@ -306,9 +335,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(row)
         row, _ = status_row("Manual joints", "READY", "Existing jog controls preserved")
         layout.addWidget(row)
-        row, _ = status_row("Auto delivery", "PENDING", "Waiting for group workflow")
+        row, self.dashboard_loaded = status_row("Swift scene", "LOADING")
         layout.addWidget(row)
         row, _ = status_row("Collision / PLC", "PENDING", "Awaiting the safety and PLC modules")
+        layout.addWidget(row)
+        row, self.dashboard_safety = status_row('Zone / curtain', 'LOADING')
         layout.addWidget(row)
         row, self.dashboard_camera = status_row("Camera", "NOT LINKED")
         layout.addWidget(row)
@@ -317,6 +348,17 @@ class MainWindow(QMainWindow):
         open_camera.setObjectName("cameraAction")
         open_camera.clicked.connect(lambda checked=False: self.navigate(6))
         layout.addWidget(open_camera)
+        self.start_button = QPushButton('Start / Resume')
+        self.start_button.setEnabled(False)
+        self.start_button.clicked.connect(self.start_sequence)
+        layout.addWidget(self.start_button)
+        self.activity_terminal = QPlainTextEdit()
+        self.activity_terminal.setReadOnly(True)
+        self.activity_terminal.setMaximumBlockCount(80)
+        self.activity_terminal.setMinimumHeight(110)
+        self.activity_terminal.setMaximumHeight(150)
+        self.activity_terminal.setPlaceholderText('Loading workcell')
+        layout.addWidget(self.activity_terminal)
         return page
 
     @staticmethod
@@ -329,34 +371,98 @@ class MainWindow(QMainWindow):
     def make_automatic_page(self):
         page = SimplePage(
             "Automatic Mode",
-            "Colour scanning, tray pickup, filling and delivery are waiting for "
-            "the group's working sequence. These buttons are disabled.",
+            "Start opens the colour scanner and starts prisoner animation. "
+            "Pause before manual control. Resume restores saved manual poses first.",
         )
         controls = QVBoxLayout()
-        for label in ("START", "PAUSE", "RESUME"):
-            controls.addWidget(self.disabled_action(label))
+        for label, callback in (("Start / Resume", self.start_sequence),
+                                ("Pause for manual control", self.pause_sequence),
+                                ("Restart (team hook)", self.restart_sequence)):
+            button=QPushButton(label)
+            button.clicked.connect(callback)
+            controls.addWidget(button)
         page.layout().insertLayout(2, controls)
         return page
 
     def make_collision_page(self):
-        page = SimplePage(
-            "Collision Mode",
-            "Waiting for your teammate's safety/collision module. "
-            "No mock detection is shown as a working sensor.",
-        )
-        page.layout().insertWidget(2, self.disabled_action("Run collision test"))
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        heading = QLabel('MaryamBot collision test')
+        heading.setObjectName('heading')
+        layout.addWidget(heading)
+        self.collision_status = QLabel('Loading')
+        self.collision_status.setWordWrap(True)
+        layout.addWidget(self.collision_status)
+        for label, callback in (('Insert obstacle on next tray move', self.arm_collision_test),
+                                ('1. Remove obstacle', self.remove_collision_obstacle),
+                                ('2. Reset', self.reset_stop),
+                                ('3. Start / Resume', self.start_sequence)):
+            button = QPushButton(label)
+            button.clicked.connect(callback)
+            layout.addWidget(button)
+        layout.addStretch()
         return page
+
+    def arm_collision_test(self):
+        if self.runtime and self.runtime.collision:
+            self.runtime.request_pause()
+            self.runtime.submit(self.runtime.collision.arm_test)
+            self.select_camera_robot('Maryam')
+
+    def remove_collision_obstacle(self):
+        if self.runtime and self.runtime.collision:
+            self.runtime.request_pause()
+            self.runtime.submit(self.runtime.collision.remove_obstacle)
 
     def make_recovery_page(self):
         page = SimplePage(
             "Emergency / Recovery",
-            "STOP latches the simulation. Reset below only unlocks this prototype's "
-            "SIMULATED latch, not a real robot or safety controller.",
+            "STOP latches simulated motion. Acknowledge, then press Start separately. "
+            "Yara's hardware and recovery hooks: Collective_Folder/workcell_actions.py.",
         )
-        reset = QPushButton("Unlock simulated stop")
+        reset = QPushButton("Reset / acknowledge stop")
         reset.clicked.connect(lambda checked=False: self.reset_stop())
         page.layout().insertWidget(2, reset)
+        clear = QPushButton('Clear safety test actor')
+        clear.clicked.connect(self.clear_safety_actor)
+        page.layout().insertWidget(3, clear)
         return page
+
+    def make_safety_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        heading = QLabel('Safety tests')
+        heading.setObjectName('heading')
+        layout.addWidget(heading)
+        self.safety_status = QLabel('Loading')
+        layout.addWidget(self.safety_status)
+        for text, kind in (('Test light curtain', 'curtain'),
+                                            ('Test kitchen entry', 'kitchen'),
+                                            ('Test isolation entry', 'isolation')):
+            button = QPushButton(text)
+            button.clicked.connect(lambda checked=False, k=kind:self.run_safety_test(k))
+            layout.addWidget(button)
+        clear = QPushButton('1. Remove prisoner')
+        clear.clicked.connect(self.clear_safety_actor)
+        layout.addWidget(clear)
+        reset = QPushButton('2. Reset')
+        reset.clicked.connect(self.reset_stop)
+        layout.addWidget(reset)
+        resume = QPushButton('3. Start / Resume')
+        resume.clicked.connect(self.start_sequence)
+        layout.addWidget(resume)
+        layout.addStretch()
+        return page
+
+    def run_safety_test(self, kind):
+        if self.runtime and self.runtime.safety:
+            self.runtime.request_pause()
+            self.runtime.submit(lambda:self.runtime.safety.run(kind))
+
+    def clear_safety_actor(self):
+        if self.runtime and self.runtime.safety:
+            self.runtime.request_pause()
+            self.runtime.submit(self.runtime.safety.clear_actor)
 
     def make_plc_page(self):
         page = SimplePage(
@@ -385,6 +491,7 @@ class MainWindow(QMainWindow):
             ("Maryam", "📷 MaryamBot"),
             ("Yara", "📷 YaraBot"),
             ("Hannah", "📷 HannahBot"),
+            ("ReBot", "📷 ReBot"),
         ):
             button = QPushButton(label)
             button.setObjectName("cameraRobotButton")
@@ -422,7 +529,7 @@ class MainWindow(QMainWindow):
         self.swift_env = env
         self.swift_robots = {key: robots[key] for key in CAMERA_OFFSETS if key in robots}
         self.camera_status.setText(
-            "Swift linked. Select Maryam, Yara or Hannah to follow its motion."
+            "Swift linked. Select Maryam, Yara, Hannah or ReBot to follow its motion."
         )
         self.dashboard_camera.setText("LINKED")
         # If a robot was selected before connection, select it again in the UI.
@@ -469,8 +576,13 @@ class MainWindow(QMainWindow):
             return False
         try:
             robot = self.swift_robots[self.camera_selected]
-            position, look_at = _camera_pose_for_robot(robot, self.camera_selected)
-            self.swift_env.set_camera_pose(position, look_at)
+            position, look_at = _camera_pose_for_robot(
+                robot, self.camera_selected, near_robot=self.swift_robots.get('Yara'))
+            if self.runtime:
+                env = self.swift_env
+                self.runtime.submit(lambda: env.set_camera_pose(position, look_at))
+            else:
+                self.swift_env.set_camera_pose(position, look_at)
             return True
         except Exception as exc:
             self.stop_camera_follow(show_message=False)
@@ -490,8 +602,10 @@ class MainWindow(QMainWindow):
 
     def navigate(self, index):
         self.pages.setCurrentIndex(index)
-        for i, button in enumerate(self.nav_buttons):
-            button.setProperty("active", "true" if i == index else "false")
+        if index == 2:
+            self.manual_page.activate()
+        for page_index, button in zip(self.nav_page_indices, self.nav_buttons):
+            button.setProperty("active", "true" if page_index == index else "false")
             button.style().unpolish(button)
             button.style().polish(button)
             button.update()
@@ -500,26 +614,68 @@ class MainWindow(QMainWindow):
         state = str(state)
         self.state.setText("● " + state)
         self.dashboard_state.setText(state)
-        if state == "ESTOP":
+        if state == "ESTOP" and self.pages.currentIndex() not in (3, 7):
             self.navigate(4)
 
     def reset_stop(self):
         if self.system.state != "ESTOP":
             return
-        password, ok = QInputDialog.getText(
-            self, "Prototype recovery", "Enter DEMO password:",
-            QLineEdit.EchoMode.Password,
-        )
-        if ok and password == "demo123":
-            self.system.reset()
-        elif ok:
-            QMessageBox.warning(self, "Denied", "Incorrect demo password")
+        self.system.reset()
+
+    def start_sequence(self):
+        if self.runtime and self.runtime.state in ('READY','PAUSED'):
+            self.runtime.submit(self.runtime.start)
+
+    def pause_sequence(self):
+        if self.runtime:
+            self.runtime.request_pause()
+
+    def restart_sequence(self):
+        if self.runtime:
+            self.runtime.submit(self.runtime.restart)
+
+    def poll_runtime(self):
+        if not self.runtime:
+            return
+        state, message = self.runtime.status()
+        for number, activity in self.runtime.activity_since(self.last_activity):
+            self.activity_terminal.appendPlainText(activity)
+            self.last_activity = number
+        if self.runtime.collision:
+            self.collision_status.setText(self.runtime.collision.status)
+        if self.runtime.safety:
+            safety = self.runtime.safety
+            hazards = safety.active_hazards()
+            self.dashboard_safety.setText('TRIPPED' if hazards else 'CLEAR')
+            self.safety_status.setText('Prisoner in area' if hazards else 'Area clear')
+            if safety.alert_number > self.last_safety_alert:
+                self.last_safety_alert = safety.alert_number
+                if self.safety_warning:
+                    self.safety_warning.close()
+                self.safety_warning = QMessageBox(QMessageBox.Warning, 'Warning',
+                    'Prisoner in area', QMessageBox.Ok, self)
+                self.safety_warning.setWindowModality(Qt.NonModal)
+                self.safety_warning.show()
+        self.start_button.setEnabled(state in ('READY','PAUSED'))
+        self.dashboard_loaded.setText('LOADED' if self.runtime.robots else 'LOADING')
+        if state == 'FAULT':
+            self.dashboard_loaded.setText('FAULT')
+        if self.runtime.robots and self.swift_env is None:
+            cameras = {name.replace('Bot','') if name != 'ReBot' else 'ReBot': robot
+                       for name, robot in self.runtime.robots.items()}
+            self.attach_swift_scene(self.runtime.env, cameras)
+        if state != self.system.state:
+            self.system.state = state
+            self.system.changed.emit(state)
+
+    def closeEvent(self, event):
+        if self.safety_warning:
+            self.safety_warning.close()
+        if self.runtime:
+            self.runtime.close()
+        event.accept()
 
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    apply_theme(app)
-    app.setStyleSheet(app.styleSheet() + "\n" + COMPACT_STYLE)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+    from Collective_Folder.EnviroParts_S.main_all import main
+    main()

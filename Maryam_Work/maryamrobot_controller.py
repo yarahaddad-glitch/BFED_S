@@ -21,8 +21,9 @@ def stl_bounds(filename, unit_scale=1.0):
 class RobotController:
     def __init__(self, robot, stl_files, obstacles=None, *, stl_scale=1.0,
                  box_padding=0.008, clearance=0.015, dt=0.035,
-                 barrier_y=None):
+                 barrier_y=None, base_stl=None):
         self.robot = robot
+        self.extra_valid = None
         self.obstacles = list(obstacles or [])
         if not self.obstacles and barrier_y is None:
             print("[RMRC] No external obstacles configured; obstacle avoidance is inactive.")
@@ -53,6 +54,10 @@ class RobotController:
         if np.any(self.q_min >= self.q_max):
             raise ValueError("Mechanical and software joint limits do not overlap")
         self.boxes = []
+        self.base_box = None
+        if base_stl is not None:
+            lo, hi = stl_bounds(base_stl, stl_scale)
+            self.base_box = (hi - lo + 2 * box_padding, SE3(*((lo + hi) / 2)))
         home_frames = self.frames(np.zeros(robot.n))
         if len(stl_files) != robot.n:
             raise ValueError("Supply one moving-link STL for each robot joint")
@@ -77,6 +82,14 @@ class RobotController:
     def body_poses(self, q):
         frames = self.frames(q)
         return [(frames[i + 1] * local, size) for i, (size, local) in enumerate(self.boxes)]
+
+    def tray_body_poses(self, q):
+        """Tray clearance includes the fixed housing as well as moving links."""
+        bodies = self.body_poses(q)
+        if self.base_box is not None:
+            size, local = self.base_box
+            bodies = [(self.robot.base * local, size)] + bodies
+        return bodies
 
     def colliding(self, q):
         """Approximate external obstacle check; not a self-collision checker."""
@@ -134,6 +147,9 @@ class RobotController:
 
         # Check external obstacles
         if self.colliding(q):
+            return False
+
+        if self.extra_valid is not None and not self.extra_valid(q):
             return False
 
         return True

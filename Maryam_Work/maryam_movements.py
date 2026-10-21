@@ -79,6 +79,7 @@ def build_controller(maryambot):
         obstacles=[],            # bar-plane guard below; full scene collision is separate
         stl_scale=1.0,
         barrier_y=BAR_ROBOT_LIMIT_Y,
+        base_stl=ASSIGNMENT_ROOT / 'Maryam_Work/RS007N-BASE.STL',
     )
 
 
@@ -222,7 +223,7 @@ def serving_gap_validator(gap):
     return fits
 
 
-def collect_served_meal(env, tray, payload, gap, dt):
+def collect_served_meal(env, tray, payload, gap, dt, clearance=None):
     """Recipient pulls the released tray through; robot remains inside the bars."""
     start = SE3(tray.T)
     centre = start.t + start.R @ (TRAY_CENTRE_UNSCALED * TRAY_SCALE)
@@ -232,8 +233,12 @@ def collect_served_meal(env, tray, payload, gap, dt):
              for k in range(1, steps + 1)]
     if not all(serving_gap_validator(gap)(pose) for pose in poses):
         raise RuntimeError("Served meal cannot clear the opening; holding tray.")
+    if clearance is not None and not all(clearance(pose) for pose in poses):
+        raise RuntimeError('Recipient tray would hit MaryamBot; holding tray')
     print("[HANDOUT] Recipient takes the tray; robot stays behind the bars.", flush=True)
     for pose in poses:
+        if clearance is not None and not clearance(pose):
+            raise RuntimeError('Recipient path blocked; holding tray')
         tray.T = pose.A
         for shape, relative in payload:
             shape.T = (pose * relative).A
@@ -249,6 +254,7 @@ class MaryamMovements:
 
     def __init__(self, env, objects, robot, trays):
         self.env, self.objects = env, objects
+        self.home_q = robot.q.copy()
         self.controller = build_controller(robot)
         self.layout = build_belt_layout(objects, robot)
         if SHOW_MARKERS:
@@ -260,6 +266,9 @@ class MaryamMovements:
             env, robot, self.controller, self.layout, tray_scale=TRAY_SCALE,
             return_home=RETURN_HOME_AFTER_PLACE,
             animation_speed=ROBOT_ANIMATION_SPEED, cache_dir=ROUTE_CACHE_DIR)
+        self.delivery.stationary_trays = list(trays.values())
+        self.controller.extra_valid = lambda q:self.delivery.queued_trays_clear(
+            q, active_tray=getattr(self.delivery, '_planning_tray', None))
         self.pickups = {"blue": self.pick_blue, "green": self.pick_green}
         self.handouts = {"blue": self.handout_blue, "green": self.handout_green}
 
@@ -282,29 +291,49 @@ class MaryamMovements:
     def _handout(self, tray, label):
         gap = mesh_xyz(self.objects, "frontBars", (13.4, 4.7, 0.5))
         gap = gap + np.asarray(HANDOUT_GAP_LOCAL)
-        inside = gap + [0, -HANDOUT_SIDE_CLEARANCE, 0]
-        handout = gap + [0, HANDOUT_INSERTION, 0]
+        inside = gap + [.06, -HANDOUT_SIDE_CLEARANCE, 0]
+        handout = gap + [.06, HANDOUT_INSERTION, 0]
         align = inside.copy()
-        align[1] = self.layout.place_centre[1]
+        align[1] = inside[1] - .15
         align[2] = BELT_SURFACE_Z + 0.18
         low = align.copy()
         low[2] = inside[2]
         outcome = self.delivery.deliver(
             tray, label=f"{label} loaded meal", destination=handout,
-            waypoints=[align, low, inside], carry_validator=serving_gap_validator(gap))
+            waypoints=[align, low, inside], carry_validator=serving_gap_validator(gap),
+            destination_rotation=SE3.Rz(-np.pi/2).R @ SE3(tray.T).R)
         if outcome.status != "PLACED":
             raise RuntimeError(f"Handout failed: {outcome.message}")
         for _ in range(max(1, int(np.ceil(HANDOUT_PAUSE / self.controller.dt)))):
             self.env.step(self.controller.dt)
         collect_served_meal(
-            self.env, tray, self.delivery.payload, gap, self.controller.dt)
+            self.env, tray, self.delivery.payload, gap, self.controller.dt,
+            clearance=lambda pose:self.delivery.tray_clears_robot(self.delivery.robot.q, pose)
+            and self.delivery.tray_clears_obstacles(pose)
+            and self.delivery.queued_trays_clear(self.delivery.robot.q, pose, tray))
+        self.last_handout_pose = SE3(tray.T)
         for shape, _ in self.delivery.payload:
             shape.T = SE3(0, 0, -100).A
         # Swift.remove leaves None entries which this installed Swift.step
         # dereferences on the next cycle. Park served meshes offstage instead.
         tray.T = SE3(0, 0, -100).A
         self.delivery.payload = []
+        self.return_home()
         return outcome
+
+    def return_home(self):
+        """Return to the startup joint configuration with prechecked joint motion."""
+        robot = self.delivery.robot
+        start = robot.q.copy()
+        count = max(60, int(np.ceil(np.max(np.abs(start-self.home_q)) / .01)))
+        blend = np.linspace(0, 1, count)
+        blend = 3*blend**2-2*blend**3
+        path = start + blend[:, None]*(self.home_q-start)
+        if not all(self.controller.valid(q) for q in path):
+            raise RuntimeError('Home path blocked; MaryamBot remains stopped')
+        self.delivery._watched_tray = None
+        getattr(self, 'activity', lambda message:None)('MaryamBot: returning home')
+        self.delivery._execute(path)
 
     def serve(self, colour, on_conveyor):
         """Run one detected colour; return False only when its stack is empty.

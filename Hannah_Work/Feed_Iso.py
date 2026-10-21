@@ -2,12 +2,12 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from spatialmath import SE3
 from spatialgeometry import Cuboid
- 
+
 try:
     from Hannah_Work.Class_HannahBot import HannahBot
 except ImportError:
     from Class_HannahBot import HannahBot
- 
+
 try:
     import estop
 except ImportError:
@@ -15,12 +15,12 @@ except ImportError:
         from Collective_Folder import estop
     except ImportError:
         estop = None
- 
+
 try:
     from ir_support_extra_robots import Turtlebot3Waffle
 except ImportError:
     Turtlebot3Waffle = None
- 
+
 # ---------------- settings ----------------
 READY_POSE_DEG = [-157.6, 28.8, 23.5, -30.7, 142.0, 15.8]   # gripper sideways (roll 90)
 REF_POSE_DEG = [3, -31, 62, 115, -131, -2]
@@ -40,20 +40,20 @@ TRAVELS = [Travel_1, Travel_2, Travel_3]
 Second_turn = 90        # turn before the last stretch (deg)
 second_travel = 1.6       # last stretch before putting the tray down (m)
 BACK_OFF = 1         # reverse this far after putting the tray down (m)
- 
+
 # Collision test (only used when feed_iso gets walls=...)
 DRIVE_SIDESTEP = 0.90   # TurtleBot: how far to the side it passes a ball (m)
 DRIVE_LEADIN = 0.80     # TurtleBot: starts/ends the sidestep this far before/after it (m)
 BALL_ALONG = 0.75       # test ball: how far down the hallway (0 = start of Travel_1, 1 = end)
- 
+
 DT = 0.02
 TOLERANCE = 0.03        # arm moves count as reached within 30 mm
- 
+
 # Tray corners relative to its origin, before the Mesh's scale (from read_tray_size.py)
 TRAY_LO = [0.0, -0.198, 0.0]
 TRAY_HI = [0.3, 0.0002, 0.018]
- 
- 
+
+
 def tray_points(tray):
     """Pickup geometry for one tray: (edge_x, tray_y, grip_z)."""
     lo, hi = np.array(TRAY_LO), np.array(TRAY_HI)
@@ -62,17 +62,18 @@ def tray_points(tray):
     origin = np.asarray(tray.T, float)[:3, 3]
     lo, hi = origin + lo * scale, origin + hi * scale
     return lo[0], 0.5 * (lo[1] + hi[1]), 0.5 * (lo[2] + hi[2])
- 
- 
+
+
 def feed_iso(env, trays, **unused):
+    activity = unused.get('activity', lambda message: None)
     if not isinstance(trays, (list, tuple)):
         trays = [trays]
- 
+
     # ---------------- robots, lined up with the first tray ----------------
     edge_x, tray_y, grip_z = tray_points(trays[0])
     robot = {"x": edge_x - WORK_DISTANCE - START_BACK, "y": tray_y, "yaw": 0.0}
     held = {}
- 
+
     hannahbot = HannahBot()
     hannahbot.q = np.deg2rad(READY_POSE_DEG)
     hannahbot.base = SE3(robot["x"], robot["y"], DECK_Z)
@@ -80,7 +81,7 @@ def feed_iso(env, trays, **unused):
     walls = unused.get("walls")
     if walls is not None:                         # wall collision watches HannahBot
         walls.watch_robot(hannahbot, "HannahBot")
- 
+
     turtle = None
     if Turtlebot3Waffle is not None:
         try:
@@ -93,15 +94,15 @@ def feed_iso(env, trays, **unused):
         turtle = Cuboid(scale=[0.28, 0.31, DECK_Z - 0.02], color=[0.15, 0.15, 0.17, 1],
                         pose=SE3(robot["x"], robot["y"], DECK_Z / 2 + 0.01))
         env.add(turtle)
- 
+
     # Gripper orientation stays locked (turns only with the robot)
     hannahbot.base = SE3(0, 0, DECK_Z)
     R_lock = Rotation.from_euler("x", 90, degrees=True).as_matrix() @ \
         hannahbot.measured_fkine(np.deg2rad(REF_POSE_DEG)).R
- 
+
     def tool(q=None):
         return hannahbot.measured_fkine(hannahbot.q if q is None else q)
- 
+
     def update():
         """Redraw the TurtleBot, the arm on it and (if held) the tray."""
         x, y, yaw = robot["x"], robot["y"], robot["yaw"]
@@ -122,11 +123,11 @@ def feed_iso(env, trays, **unused):
             T[:3, 3] = tool().t + Rz @ held["offset"]
             held["tray"].T = T
         env.step(DT)
- 
+
     def smooth(n):
         u = np.linspace(0, 1, n)
         return 3 * u**2 - 2 * u**3
- 
+
     # ---------------- moves ----------------
     def drive(distance):
         """Drive straight. If a ball is on the way, drive round it and carry on."""
@@ -155,7 +156,7 @@ def feed_iso(env, trays, **unused):
             robot["x"] = x0 + s * distance * np.cos(yaw)
             robot["y"] = y0 + s * distance * np.sin(yaw)
             update()
- 
+
     def turn(deg):
         if abs(deg) < 0.5:
             return
@@ -164,11 +165,11 @@ def feed_iso(env, trays, **unused):
         for s in smooth(max(int(abs(deg) / 45 * 1.5 / DT), 2)):
             robot["yaw"] = yaw0 + s * np.deg2rad(deg)
             update()
- 
+
     def face(yaw_deg):
         """Turn on the spot (shortest way) to face a heading."""
         turn((yaw_deg - np.rad2deg(robot["yaw"]) + 180) % 360 - 180)
- 
+
     def go_to(x, y):
         """Turn towards (x, y) and drive straight there."""
         dx, dy = x - robot["x"], y - robot["y"]
@@ -177,7 +178,7 @@ def feed_iso(env, trays, **unused):
             return
         face(np.rad2deg(np.arctan2(dy, dx)))
         drive(dist)
- 
+
     def arm_to(target, seconds=6.0):
         """Straight-line move of the gripper with its orientation locked (RMRC)."""
         target = np.asarray(target, float)
@@ -207,12 +208,15 @@ def feed_iso(env, trays, **unused):
             if np.any(q_next < qmin) or np.any(q_next > qmax):
                 print("  stopped at a joint limit")
                 break
+            guard = getattr(hannahbot, 'configuration_guard', None)
+            if guard:
+                guard(q_next)
             hannahbot.q = q_next
             update()
         error = np.linalg.norm(tool().t - target)
         print(f"  error {error * 1000:.1f} mm")
         return error < TOLERANCE
- 
+
     # ---------------- emergency stop: go home, then come back ----------------
     def go_home():
         """Move the gripper to the home position. The gripper keeps its locked
@@ -222,78 +226,86 @@ def feed_iso(env, trays, **unused):
         print("HannahBot: going to home position" + (" (holding the tray level)" if held else ""))
         arm_to(home_xyz, seconds=3.0)
         return was_at
- 
+
     def come_back(was_at):
         print("HannahBot: returning to where it was")
         arm_to(was_at, seconds=3.0)
- 
+
     if estop is not None:
         estop.register(go_home, come_back)
- 
-    # ---------------- the run ----------------
-    ok = True
-    update()
-    for i, tray in enumerate(trays):
-        print(f"\n===== TRAY {i + 1} =====")
-        edge_x, tray_y, grip_z = tray_points(tray)
- 
-        # Line up behind the tray, facing it, then drive in
-        go_to(edge_x - WORK_DISTANCE - START_BACK, tray_y)
-        face(0)
-        drive(START_BACK)
- 
-        if i == 0:
-            # First tray only: bring the arm into its pickup position
-            print("Pre-pickup")
-            arm_to([edge_x - PRE_DISTANCE, tray_y, grip_z])   # waypoint only
-            print("Forward") 
-            ok = arm_to([edge_x + PICKUP_INSET, tray_y, grip_z]) and ok
-        else:
-            # The arm is still in its pickup position from the last tray
-            error = np.linalg.norm(tool().t - [edge_x + PICKUP_INSET, tray_y, grip_z])
-            print(f"Arm already in place (error {error * 1000:.1f} mm)")
- 
-        print("Grab tray")
-        T_tray = np.asarray(tray.T, float)
-        held.update(tray=tray, offset=T_tray[:3, 3] - tool().t,
-                    R=T_tray[:3, :3].copy(), yaw=robot["yaw"])
- 
-        print("Lift")
-        lift_start = tool().t
-        arm_to(lift_start + [0, 0, LIFT], seconds=3.0)   # may stop early at a joint limit
-        lifted = tool().t[2] - lift_start[2]               # how far it actually went up
- 
-        # Carry it: remember each corner so the way back can retrace it
-        route = []
-        turn(180)
-        drive(LEAVE_DISTANCE)
-        route.append((robot["x"], robot["y"]))
-        turn(first_turn)
-        travel = TRAVELS[i] if i < len(TRAVELS) else TRAVELS[-1]
-        if walls is not None and walls.test_ball and i == 0:   # test: ball in the hallway
-            ahead = np.array([np.cos(robot["yaw"]), np.sin(robot["yaw"])]) * travel * BALL_ALONG
-            walls.add_ball([robot["x"] + ahead[0], robot["y"] + ahead[1], 0.30], walls.test_ball)
-        drive(travel)
-        route.append((robot["x"], robot["y"]))
-        turn(Second_turn)
-        drive(second_travel)
- 
-        # Put it down (the reverse of the pickup)
-        print("Lower")
-        arm_to(tool().t - [0, 0, lifted], seconds=3.0)
-        print("Release tray")
-        held.clear()
-        print("Back away")
-        drive(-BACK_OFF)
-        turn(90)
-        drive(TRAVELS[i] if i < len(TRAVELS) else TRAVELS[-1])
- 
-        # # Retrace the route back towards the trays
-        # if i < len(trays) - 1:
-        #     print("Heading back for the next tray")
-        #     for x, y in reversed(route):
-        #         go_to(x, y)
- 
-    print("\nfeed_iso done")
-    return hannahbot, turtle, ok
- 
+
+    def run_sequence():
+        # ---------------- the run ----------------
+        ok = True
+        update()
+        for i, tray in enumerate(trays):
+            activity(f'HannahBot: collecting meal {i + 1}')
+            print(f"\n===== TRAY {i + 1} =====")
+            edge_x, tray_y, grip_z = tray_points(tray)
+
+            # Line up behind the tray, facing it, then drive in
+            go_to(edge_x - WORK_DISTANCE - START_BACK, tray_y)
+            face(0)
+            drive(START_BACK)
+
+            if i == 0:
+                # First tray only: bring the arm into its pickup position
+                print("Pre-pickup")
+                arm_to([edge_x - PRE_DISTANCE, tray_y, grip_z])   # waypoint only
+                print("Forward")
+                ok = arm_to([edge_x + PICKUP_INSET, tray_y, grip_z]) and ok
+            else:
+                # The arm is still in its pickup position from the last tray
+                error = np.linalg.norm(tool().t - [edge_x + PICKUP_INSET, tray_y, grip_z])
+                print(f"Arm already in place (error {error * 1000:.1f} mm)")
+
+            print("Grab tray")
+            T_tray = np.asarray(tray.T, float)
+            held.update(tray=tray, offset=T_tray[:3, 3] - tool().t,
+                        R=T_tray[:3, :3].copy(), yaw=robot["yaw"])
+
+            print("Lift")
+            lift_start = tool().t
+            arm_to(lift_start + [0, 0, LIFT], seconds=3.0)   # may stop early at a joint limit
+            lifted = tool().t[2] - lift_start[2]               # how far it actually went up
+
+            # Carry it: remember each corner so the way back can retrace it
+            route = []
+            turn(180)
+            drive(LEAVE_DISTANCE)
+            route.append((robot["x"], robot["y"]))
+            turn(first_turn)
+            travel = TRAVELS[i] if i < len(TRAVELS) else TRAVELS[-1]
+            if walls is not None and walls.test_ball and i == 0:   # test: ball in the hallway
+                ahead = np.array([np.cos(robot["yaw"]), np.sin(robot["yaw"])]) * travel * BALL_ALONG
+                walls.add_ball([robot["x"] + ahead[0], robot["y"] + ahead[1], 0.30], walls.test_ball)
+            drive(travel)
+            route.append((robot["x"], robot["y"]))
+            turn(Second_turn)
+            drive(second_travel)
+
+            # Put it down (the reverse of the pickup)
+            activity(f'HannahBot: feeding isolation prisoner {i + 1}')
+            print("Lower")
+            arm_to(tool().t - [0, 0, lifted], seconds=3.0)
+            print("Release tray")
+            held.clear()
+            print("Back away")
+            drive(-BACK_OFF)
+            turn(90)
+            drive(TRAVELS[i] if i < len(TRAVELS) else TRAVELS[-1])
+
+            # # Retrace the route back towards the trays
+            # if i < len(trays) - 1:
+            #     print("Heading back for the next tray")
+            #     for x, y in reversed(route):
+            #         go_to(x, y)
+
+        print("\nfeed_iso done")
+        activity('HannahBot: isolation meals delivered')
+        return hannahbot, turtle, ok
+
+    # GUI integration: construct all geometry now, animate only after Start.
+    if unused.get("prepare_only", False):
+        return hannahbot, turtle, run_sequence
+    return run_sequence()

@@ -8,7 +8,7 @@ from spatialmath import SE3
 
 
 class HeadlessSwift(swift.Swift):
-    def _send_socket(self, code, data=None, **kwargs):
+    def _send_socket(self, code, data=None, *args, **kwargs):
         # Do not hide the live-update bug that caused browser startup to hang.
         assert code != "shape_update", "Unexpected live shape update"
         return 0
@@ -31,6 +31,7 @@ def check():
         assert movements.serve(colour, lambda: called.append(True))
         assert called == [True]
         assert movements.delivery.payload == []
+        np.testing.assert_allclose(robot.q, movements.home_q, atol=1e-8)
         assert len(yara.FOOD_NAMES[colour]) == food_count - 1
         assert len(movements.towels) == towel_count - 1
         assert np.allclose(movements.rebot.base.t, [12.5, 3.6, .66])

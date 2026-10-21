@@ -1,109 +1,153 @@
-"""Simulation-only bridge to existing robot classes."""
-
-import sys
-from pathlib import Path
+﻿"""Manual controls for the robot objects in the running shared workcell."""
 import numpy as np
 from spatialmath import SE3
+from Collective_Folder import workcell_actions
 
-# Find the project root regardless of how deeply the GUI folder is nested.
-ASSIGNMENT_ROOT = next(
-    (parent for parent in Path(__file__).resolve().parents
-     if all((parent / folder).is_dir()
-            for folder in ("Maryam_Work", "Hannah_Work", "Yara_Work"))),
-    None,
-)
-if ASSIGNMENT_ROOT is None:
-    raise ImportError(
-        "Cannot find the robot folders. Keep the GUI inside the Assignment 2 "
-        "project containing Maryam_Work, Hannah_Work and Yara_Work."
-    )
-
-if str(ASSIGNMENT_ROOT) not in sys.path:
-    sys.path.insert(0, str(ASSIGNMENT_ROOT))
-
-CONFIG = {
-    'MaryamBot': {'module':'Maryam_Work.Maryam_robotclass', 'class':'MaryamBot',
-                  'base': lambda: SE3(13.75, 3.5, 0.7) * SE3.Rz(np.pi),
-                  'home': [0,0,0,0,0,0]},
-    'HannahBot': {'module':'Hannah_Work.Class_HannahBot', 'class':'HannahBot',
-                 'base':lambda: SE3(2,0,0), 'home':[0,0,0,0,0,0]},
-    'YaraBot': {'module':'Yara_Work.YaraBot_DH', 'class':'YaraBot',
-                'base':lambda: SE3(4,0,0), 'home':[0,-90,0,-90,-180,0]},
-}
 
 class RobotBridge:
     def __init__(self):
         self.env = None
         self.robots = {}
-        self.errors = {}
+        self.runtime = None
+        self.draw = None
+        self.validators = {}
+        self.saved = {}
 
-    def launch(self):
-        if self.env is not None:
-            return
-        import swift
-        self.env = swift.Swift()
-        self.env.launch(realtime=False)
+    def attach(self, env, robots, runtime, draw, validators=None):
+        self.env, self.robots, self.runtime, self.draw = env, robots, runtime, draw
+        self.validators = validators or {}
+        runtime.bridge = self
 
     def load(self, name):
-        if name in self.robots:
-            return self.robots[name]
-        self.launch()
-        from importlib import import_module
-        spec = CONFIG[name]
-        cls = getattr(import_module(spec['module']), spec['class'])
-        robot = cls()
-        robot.base = spec['base']()
-        robot.q = np.deg2rad(spec['home']).astype(float)
-        if name == 'HannahBot':
-            robot.add_to_env(self.env)
-        else:
-            robot.add_to_env(self.env)
-        self.robots[name] = robot
-        self.env.step(0.01)
-        return robot
+        if name not in self.robots:
+            raise ValueError("Wait until the shared workcell is fully loaded")
+        return self.robots[name]
+
+    def begin_manual(self, name):
+        robot = self.load(name)
+        if self.runtime.state not in ('READY', 'PAUSED', 'COMPLETE'):
+            raise ValueError('Pause automatic motion before jogging')
+        if name not in self.saved:
+            self.saved[name] = (np.asarray(robot.q, float).copy(), SE3(robot.base))
 
     def limits_deg(self, name):
-        r = self.load(name)
-        if name == 'MaryamBot':
-            # Use class's conservative limits; same 5-degree margin as RMRC mechanical checks.
-            lim = np.asarray(r.qlim, dtype=float)
-            conservative = np.asarray(r.safe_qlim, dtype=float)
-            result = np.array([np.maximum(lim[0]+np.deg2rad(5),conservative[0]),
-                               np.minimum(lim[1]-np.deg2rad(5),conservative[1])])
-            return np.rad2deg(result), 'Kawasaki software limits'
-        if name == 'HannahBot':
-            return np.rad2deg(np.asarray(r.qlim,float)), 'HannahBot class joint limits'
-        # Yara class has no qlim: use provisional demo limits, not real/safe manufacturer limits.
-        return np.array([[-180,-180,-180,-180,-180,-180],
-                         [180,180,180,180,180,180]],float), 'PROVISIONAL demo range: confirm with teammate'
-
-    def angles_deg(self,name):
-        return np.rad2deg(self.load(name).q)
-
-    def set_joint(self,name,index,angle_deg):
         robot = self.load(name)
-        limits,_ = self.limits_deg(name)
+        limits = np.asarray(robot.qlim, float)
+        if limits.shape != (2, robot.n) or not np.all(np.isfinite(limits)):
+            limits = np.array([[-np.pi] * robot.n, [np.pi] * robot.n])
+            source = 'Provisional simulation limits; confirm with model author'
+        else:
+            source = 'Robot model joint limits'
+        if hasattr(robot, 'safe_qlim'):
+            limits = np.array([np.maximum(limits[0], robot.safe_qlim[0]),
+                               np.minimum(limits[1], robot.safe_qlim[1])])
+        return np.rad2deg(limits), source
+
+    def angles_deg(self, name):
+        return np.rad2deg(np.asarray(self.load(name).q, float))
+
+    def tool_pose(self, name, q=None):
+        robot = self.load(name)
+        q = robot.q if q is None else q
+        if name == 'ReBot':
+            links = robot.get_link_transforms(q)
+            return robot.base * robot.get_gripper_transforms(links, robot.gripper_opening)[0]
+        if name == 'HannahBot':
+            return robot.measured_fkine(q)
+        return robot.fkine(q)
+
+    def _valid(self, name, q):
+        robot = self.load(name)
+        limits, _ = self.limits_deg(name)
+        if q.shape != (robot.n,) or not np.all(np.isfinite(q)):
+            raise ValueError('Expected finite joint angles for this robot')
+        angles = np.rad2deg(q)
+        if np.any(angles < limits[0]) or np.any(angles > limits[1]):
+            raise ValueError('Outside configured joint limits')
+        validator = self.validators.get(name)
+        if validator is not None and not validator(q):
+            raise ValueError('Existing collision/limit guard rejected the motion')
+        if not workcell_actions.validate_manual(self.runtime, name, q):
+            raise ValueError('Team safety module rejected the motion')
+        if not self.runtime.configuration_clear(name, q):
+            raise ValueError('Registered team collision check rejected the motion')
+
+    def move_to(self, name, target):
+        self.begin_manual(name)
+        robot = self.load(name)
+        start = np.asarray(robot.q, float).copy()
+        target = np.asarray(target, float)
+        count = max(2, int(np.ceil(np.max(np.abs(target-start)) / np.deg2rad(1))))
+        path = np.linspace(start, target, count + 1)[1:]
+        # Validate the entire sampled path before changing the robot.
+        for q in path:
+            self._valid(name, q)
+        for q in path:
+            if self.runtime.closed or self.runtime.state == 'ESTOP':
+                raise ValueError('Manual motion interrupted by stop')
+            self._valid(name, q)  # Scene hazards may change after preflight.
+            robot.q = q.copy()
+            if hasattr(robot, 'update_meshes'):
+                robot.update_meshes()
+            self.draw(0.025)
+        self.runtime.message = f'{name}: joint pose updated in the shared scene'
+
+    def set_joint(self, name, index, angle_deg):
+        robot = self.load(name)
         if not 0 <= index < robot.n or not np.isfinite(angle_deg):
             raise ValueError('Invalid joint command')
-        if not limits[0,index] <= angle_deg <= limits[1,index]:
-            raise ValueError('Outside configured joint limits')
-        q = np.asarray(robot.q,float).copy()
+        q = np.asarray(robot.q, float).copy()
         q[index] = np.deg2rad(angle_deg)
-        if name == 'MaryamBot' and not robot.joints_safe(q):
-            raise ValueError('Kawasaki software limits reject command')
-        # Manual jog is an individual joint setpoint, NOT collision-checked motion planning.
-        robot.q = q
-        if name == 'HannahBot':
-            robot.update_meshes()
-        self.env.step(0.01)
+        self.move_to(name, q)
 
-    def home(self,name):
-        # Preview reset only; not suitable as an automatic post-E-stop motion.
-        robot=self.load(name)
-        home=np.array(CONFIG[name]['home'],float)
-        limits,_=self.limits_deg(name)
-        if np.any(home < limits[0]) or np.any(home > limits[1]):
-            raise ValueError('Home is outside GUI joint range')
-        robot.q = np.deg2rad(home)
-        if name=='HannahBot': robot.update_meshes()
-        self.env.step(0.01)
+    def translate(self, name, axis, distance):
+        self.begin_manual(name)
+        robot = self.load(name)
+        q = np.asarray(robot.q, float).copy()
+        initial = self.tool_pose(name, q)
+        goal = initial.t.copy()
+        goal[axis] += distance
+        # Numerical translational Jacobian also supports the custom ReBot model.
+        # Retain orientation using spatial rotation error and damped least squares.
+        def rotation_error(target_R, current_R):
+            delta = target_R @ current_R.T
+            # Local spatial orientation error; each requested Cartesian jog is small.
+            return 0.5 * np.array([delta[2,1]-delta[1,2],
+                                   delta[0,2]-delta[2,0], delta[1,0]-delta[0,1]])
+        for _ in range(150):
+            pose = self.tool_pose(name, q)
+            error = np.r_[goal-pose.t, rotation_error(initial.R, pose.R)]
+            if np.linalg.norm(error[:3]) < 0.001 and np.linalg.norm(error[3:]) < 0.01:
+                self.move_to(name, q)
+                return
+            jac = np.zeros((6, robot.n))
+            for j in range(robot.n):
+                dq = np.zeros(robot.n); dq[j] = 1e-5
+                shifted = self.tool_pose(name, q+dq)
+                jac[:3, j] = (shifted.t-pose.t) / 1e-5
+                jac[3:, j] = rotation_error(shifted.R, pose.R) / 1e-5
+            step = jac.T @ np.linalg.solve(jac @ jac.T + 0.02**2*np.eye(6), error)
+            q += np.clip(step, -0.08, 0.08)
+            limits, _ = self.limits_deg(name)
+            q = np.clip(q, *np.deg2rad(limits))
+        raise ValueError('Cartesian target unreachable with the current orientation')
+
+    def restore(self, name):
+        if name not in self.saved:
+            return
+        q, base = self.saved[name]
+        robot = self.load(name)
+        # Base is saved for correspondence with the automatic trajectory.
+        if not np.allclose(robot.base.A, base.A):
+            raise ValueError('Robot base changed; teammate recovery is required')
+        self.move_to(name, q)
+        del self.saved[name]
+        self.runtime.message = f'{name}: restored to its pose before manual control'
+
+    def restore_all(self):
+        for name in list(self.saved):
+            self.restore(name)
+
+    def home(self, name):
+        self.begin_manual(name)
+        self.runtime.home(name)

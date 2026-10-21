@@ -1,67 +1,104 @@
+﻿"""Shared-scene intrusion demonstrations, separate from collision tests.
+
+Imported by main_all without launching a scene or moving any actor.
+Run this file directly to open the integrated GUI, then choose Safety tests.
+"""
 import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import numpy as np
-import swift
+from Collective_Folder.Light_curtain import SafetyLightCurtain
+from Collective_Folder.Prison_break import PrisonBreak
 
-here = Path(__file__).resolve().parent
-sys.path.append(str(here))
-sys.path.append(str(here.parent))
-
-from EnviroParts_S.Full_sim import create_environment
-from Light_curtain import SafetyLightCurtain
-from Prison_break import PrisonBreak, ZONES
-from Prisoner_movement import walk_all_prisoners, walk_one_prisoner
-
-
-def put_at(env, mesh, xyz):
-    """Move a prisoner to an exact (x, y, z) position."""
-    T = np.array(mesh.T, float)
-    T[:3, 3] = xyz
-    mesh.T = T
-    env.step(0.05)            # the check runs here
-
-
-# ---------------- set up ----------------
-env = swift.Swift()
-env.launch(realtime=True)
-scene = create_environment(env)
-PRISONER1_START = np.array(scene["prisoner1"].T, float)   # where she was loaded
-
-curtain = SafetyLightCurtain(env)
-curtain.watch_prisoners([scene["prisoner1"], scene["prisoner2"], scene["prisoner3"]])
-curtain.arm()
-
-prison = PrisonBreak(env, scene)
-prison.arm()
-
-env.step(0.05)
-
-# ---------------- TESTS ----------------
-# True = run that test, False = skip it
-TEST_CURTAIN = True
-TEST_KITCHEN = True
-TEST_ISOLATION = True
-
-# Where prisoner1 appears for each zone test: (x, y, z)
 KITCHEN_SPOT = (13.0, 2.0, 0.0)
 ISOLATION_SPOT = (6.0, 15.0, 0.0)
 
-if TEST_CURTAIN:
-    print("\n===== TEST 1: prisoner1 walks 4 m into the light curtain =====")
-    mesh = scene["prisoner1"]
-    if not np.allclose(np.array(mesh.T, float), PRISONER1_START):
-        print("prisoner1 isn't at her starting position - moving her back")
-        mesh.T = PRISONER1_START.copy()
-        env.step(0.05)
-    walk_one_prisoner(env, scene, distance=4.0)
 
-if TEST_KITCHEN:
-    print(f"\n===== TEST 2: prisoner1 appears at {KITCHEN_SPOT} (kitchen) =====")
-    put_at(env, scene["prisoner1"], KITCHEN_SPOT)
+class SafetyDemonstration:
+    def __init__(self, env, scene, runtime):
+        self.env, self.scene, self.runtime = env, scene, runtime
+        self.actor = scene['prisoner1']
+        self.saved_pose = None
+        self.start_pose = np.array(self.actor.T, float).copy()
+        self.curtain = SafetyLightCurtain(env, on_trip=self.trip)
+        self.curtain.watch_prisoners([scene[name] for name in
+            ('prisoner1', 'prisoner2', 'prisoner3') if name in scene])
+        self.zones = PrisonBreak(env, scene, on_trip=self.trip)
+        self.status = 'CLEAR'
+        self.last_event = 'Ready: light curtain and unsafe-zone monitoring active.'
+        self.alert_number = 0
 
-if TEST_ISOLATION:
-    print(f"\n===== TEST 3: prisoner1 appears at {ISOLATION_SPOT} (isolation) =====")
-    put_at(env, scene["prisoner1"], ISOLATION_SPOT)
+    def trip(self, reason):
+        self.last_event = reason
+        self.alert_number += 1
+        self.runtime.log('Prisoner in area')
+        self.runtime.request_stop(reason)
 
-print("\nAll safety tests finished.")
-env.hold()
+    def active_hazards(self):
+        beams = [f'Light curtain: {name}' for name in sorted(self.curtain.intrusions())]
+        zones = [f'{name} in {zone}' for name, zone in sorted(self.zones.intrusions())]
+        return beams + zones
+
+    def check(self):
+        self.curtain.check()
+        self.zones.check()
+        hazards = self.active_hazards()
+        self.status = 'TRIPPED: ' + '; '.join(hazards) if hazards else 'CLEAR'
+        return hazards
+
+    def arm(self):
+        step = self.env.step
+
+        def guarded_step(*args, **kwargs):
+            result = step(*args, **kwargs)
+            self.check()
+            return result
+
+        self.env.step = guarded_step
+
+    def run(self, kind):
+        if self.runtime.state not in ('READY', 'PAUSED', 'COMPLETE'):
+            raise ValueError('Clear the test actor and acknowledge the stop before another test')
+        if self.saved_pose is not None:
+            raise ValueError('Clear the previous test actor first')
+        if kind not in ('curtain', 'kitchen', 'isolation'):
+            raise ValueError('Unknown safety demonstration')
+        self.saved_pose = np.array(self.actor.T, float).copy()
+        self.last_event = f'Running {kind} intrusion test...'
+        if kind == 'curtain':
+            # Same four-metre approach as the original safety_tests.py. End the
+            # animation immediately at detection, leaving the intruder visible.
+            start = self.start_pose.copy()
+            for distance in np.linspace(0, 4.0, 81):
+                if self.runtime.closed or self.runtime.state == 'ESTOP':
+                    break
+                pose = start.copy()
+                pose[1, 3] -= distance
+                self.actor.T = pose
+                self.runtime.bridge.draw(0.025)
+        else:
+            pose = np.array(self.actor.T, float).copy()
+            pose[:3, 3] = KITCHEN_SPOT if kind == 'kitchen' else ISOLATION_SPOT
+            self.actor.T = pose
+            self.runtime.bridge.draw(0.025)
+        if self.runtime.state != 'ESTOP':
+            raise ValueError('Safety test did not trigger; inspect the configured detection geometry')
+
+    def clear_actor(self):
+        if self.runtime.state == 'RUNNING':
+            raise ValueError('Pause before clearing the safety test actor')
+        if self.saved_pose is not None:
+            self.actor.T = self.saved_pose.copy()
+            self.saved_pose = None
+            self.runtime.bridge.draw(0.025)
+        self.check()
+        self.runtime.message = 'Test actor restored. Acknowledge the stop, then Start separately.'
+
+
+if __name__ == '__main__':
+    from Collective_Folder.EnviroParts_S.main_all import main
+    main()
