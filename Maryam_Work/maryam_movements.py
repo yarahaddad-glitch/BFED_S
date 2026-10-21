@@ -285,10 +285,13 @@ class MaryamMovements:
         inside = gap + [0, -HANDOUT_SIDE_CLEARANCE, 0]
         handout = gap + [0, HANDOUT_INSERTION, 0]
         align = inside.copy()
+        align[1] = self.layout.place_centre[1]
         align[2] = BELT_SURFACE_Z + 0.18
+        low = align.copy()
+        low[2] = inside[2]
         outcome = self.delivery.deliver(
             tray, label=f"{label} loaded meal", destination=handout,
-            waypoints=[align, inside], carry_validator=serving_gap_validator(gap))
+            waypoints=[align, low, inside], carry_validator=serving_gap_validator(gap))
         if outcome.status != "PLACED":
             raise RuntimeError(f"Handout failed: {outcome.message}")
         for _ in range(max(1, int(np.ceil(HANDOUT_PAUSE / self.controller.dt)))):

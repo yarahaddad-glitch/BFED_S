@@ -1,4 +1,4 @@
-"""Maryam-only colour scanning, meal delivery and handout demo."""
+"""Colour scan -> Maryam -> Yara food -> ReBot towel -> Maryam handout."""
 import sys
 from pathlib import Path
 
@@ -7,7 +7,8 @@ if str(ASSIGNMENT_ROOT) not in sys.path:
     sys.path.insert(0, str(ASSIGNMENT_ROOT))
 
 from Maryam_Work.maryam_meal_dispatch import ColourScanner, build_default_dispatcher
-from Maryam_Work.maryam_movements import MaryamMovements, build_scene
+from Maryam_Work.maryam_movements import build_scene
+from Collective_Folder.integrated_meal import IntegratedMeal
 
 
 def run_orders(scanner, dispatcher, movements):
@@ -27,7 +28,7 @@ def run_orders(scanner, dispatcher, movements):
 
         order = result.order
         colour = order.tray.colour
-        print(f"[MEAL] Starting {colour} pickup, conveyor and handout.", flush=True)
+        print(f"[MEAL] Starting {colour}: Maryam pickup, Yara food, ReBot towel, handout.", flush=True)
         try:
             served = movements.serve(
                 colour, lambda: dispatcher.mark_on_conveyor(order))
@@ -43,7 +44,7 @@ def run_orders(scanner, dispatcher, movements):
 
 def main():
     env, objects, robot, trays = build_scene()
-    movements = MaryamMovements(env, objects, robot, trays)
+    movements = IntegratedMeal(env, objects, robot, trays)
     scanner = ColourScanner()
     try:
         run_orders(scanner, build_default_dispatcher(), movements)

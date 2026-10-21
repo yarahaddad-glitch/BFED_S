@@ -269,6 +269,12 @@ class TrayDelivery:
 
     def _execute(self, path):
         for q in path[1:]:
+            watched = getattr(self, "_watched_tray", None)
+            if watched is not None:
+                pose = (self.robot.fkine(q) * self._relative
+                        if self._carried is not None else SE3(watched.T))
+                if not self.tray_clears_robot(q, pose):
+                    raise RuntimeError("Tray would collide with Maryam; movement stopped before contact")
             self.robot.q = q.copy()
             self._step()
 
@@ -335,7 +341,7 @@ class TrayDelivery:
             ee = self.robot.fkine(q_grasp)
             hold_R = ee.R.copy()
             relative = ee.inv() * tray_pose
-            if waypoints is None and not self.tray_clears_robot(q_grasp, tray_pose):
+            if not self.tray_clears_robot(q_grasp, tray_pose):
                 rejected["grip intersects tray"] += 1
                 continue
             ee_offset = hold_R @ relative.t
@@ -380,7 +386,7 @@ class TrayDelivery:
                 q = path[-1]
             if len(legs) != len(targets):
                 continue
-            if waypoints is None and not all(self.tray_clears_robot(q, self.robot.fkine(q) * relative)
+            if not all(self.tray_clears_robot(q, self.robot.fkine(q) * relative)
                        for _, path in legs for q in path):
                 rejected["carried tray intersects robot"] += 1
                 continue
@@ -403,9 +409,14 @@ class TrayDelivery:
             approach = np.linspace(q_start, q_above, count + 1)
             if not all(controller.valid(q) for q in approach):
                 continue
-            if waypoints is None and not all(self.tray_clears_robot(q, tray_pose)
+            if not all(self.tray_clears_robot(q, tray_pose)
                        for q in list(approach) + list(descent)):
                 rejected["approach intersects tray"] += 1
+                continue
+            retreat_legs = legs[-2:] if waypoints is not None else legs[-1:]
+            if not all(self.tray_clears_robot(q, placed)
+                       for _, path in retreat_legs for q in path):
+                rejected["retreat intersects tray"] += 1
                 continue
             print(f"[PLAN] Complete pickup and carry verified (grip {attempt}).", flush=True)
             return approach, descent, legs, relative, hold_R
@@ -431,16 +442,25 @@ class TrayDelivery:
             rims = [np.array([self.edge_grip_offset, 0.0, 0.0])]
         if waypoints is not None:
             # Standard serving grip: trailing rim keeps the wrist inside the bars.
-            rims = [np.array([0.0, -self.half_width, 0.0])]
+            rims = [np.array([x, -self.half_width, 0.0])
+                    for x in (0.0, -self.edge_grip_offset, self.edge_grip_offset)]
         tray_at_grasp = tray_pose
         destination = (self.layout.place_centre if destination is None
                        else np.asarray(destination, dtype=float))
         place_origin = destination - tray_at_grasp.R @ self.centre_local
         cache_path = self._cache_path(tray_pose, destination, waypoints)
         cached = self._cached_plan(cache_path)
-        if waypoints is None and cached is not None and not all(
-                self.tray_clears_robot(q, tray_pose) for q in cached[0]):
-            cached = None
+        if cached is not None:
+            approach, descent, legs, relative, _ = cached
+            placed = self.robot.fkine(legs[-1][1][-1]) * relative
+            retreat = legs[-2:] if waypoints is not None else legs[-1:]
+            if (not all(self.tray_clears_robot(q, tray_pose)
+                        for q in list(approach) + list(descent))
+                    or not all(self.tray_clears_robot(q, self.robot.fkine(q) * relative)
+                               for _, path in legs for q in path)
+                    or not all(self.tray_clears_robot(q, placed)
+                               for _, path in retreat for q in path)):
+                cached = None
         if cached is not None:
             return (self.robot.q.copy(), tray_pose, place_origin, cached)
         self.cache_misses += 1
@@ -483,6 +503,7 @@ class TrayDelivery:
         if plan is None:
             return DeliveryResult("NOT_PICKED", "No verified pickup and carry configuration")
         approach, descent, legs, relative, hold_R = plan
+        self._watched_tray = tray_mesh
         print("[PICK] Approach", flush=True)
         self._execute(approach)
         print("[PICK] Descend to edge", flush=True)

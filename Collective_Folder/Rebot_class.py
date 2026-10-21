@@ -269,11 +269,11 @@ class ReBot:
         # Fixed gripper base
         T_end = T6 * self.T_gripper
 
-        # Right finger slides along negative Y
-        T_right = T_end * SE3(0, -opening, 0)
+        # The right STL lies on +Y in the tool frame: opening moves it outward.
+        T_right = T_end * SE3(0, opening, 0)
 
-        # Left finger slides along positive Y
-        T_left = T_end * SE3(0, opening, 0)
+        # The left STL lies on -Y, so it opens in the opposite direction.
+        T_left = T_end * SE3(0, -opening, 0)
 
         return [
             T_end,

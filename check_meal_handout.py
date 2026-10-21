@@ -40,7 +40,10 @@ def check(colour):
     inside = gap + [0, -main.HANDOUT_SIDE_CLEARANCE, 0]
     outside = gap + [0, main.HANDOUT_INSERTION, 0]
     align = inside.copy()
+    align[1] = layout.place_centre[1]
     align[2] = main.BELT_SURFACE_Z + .18
+    low = align.copy()
+    low[2] = inside[2]
     initial = {key: mesh.T.copy() for key, mesh in trays.items()}
     def observe():
         assert controller.valid(robot.q), "Robot crossed bar guard during playback"
@@ -64,7 +67,7 @@ def check(colour):
             food = SimpleNamespace(T=SE3(tray.T).A)
             delivery.payload = [(food, SE3(0, 0, .055))]
             result = delivery.deliver(
-                tray, destination=outside, waypoints=[align, inside],
+                tray, destination=outside, waypoints=[align, low, inside],
                 carry_validator=main.serving_gap_validator(gap))
             assert result.status == "PLACED", result
             centre = SE3(tray.T).t + SE3(tray.T).R @ delivery.centre_local

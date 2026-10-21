@@ -1,5 +1,4 @@
 import sys
-import random
 from itertools import islice
 import numpy as np
 from pathlib import Path
@@ -24,7 +23,7 @@ FOOD_NAMES = {
     "blue": ["cookies1", "cookies2", "cookies3"],
     "green": ["lettuce1", "lettuce2", "lettuce3"],
 }
-TEST_FOOD = "cookies3"  # None = random
+TEST_FOOD = "cookies3"  # None = nearest available food at the station
 
 CONVEYOR_STOP = (13.2, 2.25)  # same x as the food station, so it drives straight along y
 DEBUG = True  # print which link hits which obstacle
@@ -305,6 +304,34 @@ def move_arm(target, food=None, offset=None):
             execute_path(segment, food, offset)
         return True
 
+    print("[PLAN] RMRC candidates exhausted; trying collision-checked IK.", flush=True)
+    # RMRC can stall at the upright home singularity (especially green food).
+    # Solve positional IK and validate every joint sample before execution.
+    rng = np.random.default_rng(7)
+    lo, hi = joint_limits()
+    for waypoints in candidate_paths(start_pos, target):
+        q = start_q.copy()
+        segments = []
+        for waypoint in waypoints:
+            segment = None
+            for attempt in range(30):
+                seed = q if attempt == 0 else np.clip(q + rng.normal(0, .7, len(q)), lo, hi)
+                solution = yarabot.ikine_LM(SE3(*waypoint), q0=seed,
+                                           mask=[1, 1, 1, 0, 0, 0], ilimit=100)
+                if not solution.success:
+                    continue
+                candidate = np.asarray(solution.q)
+                segment = safe_trajectory(q, candidate, food, offset)
+                if segment is not None:
+                    q = candidate
+                    break
+            if segment is None:
+                break
+            segments.append(segment)
+        else:
+            for segment in segments:
+                execute_path(segment, food, offset)
+            return True
     print("No valid arm path found")
     return False
 
@@ -533,7 +560,7 @@ def turn_arm(food, offset, aim):
     return move_arm_joints(min(options, key=lambda o: o[0])[1], food, offset)
 
 
-def transport_food(food, offset):
+def transport_food(food, offset, place_target=None):
     global held_food, held_offset
 
     # 1. Straight up into the upright pose
@@ -547,11 +574,13 @@ def transport_food(food, offset):
         return False
 
     # 3. Turn 90 degrees to face the tray
-    if not turn_arm(food, offset, BLUE_TRAY_POSITION):
+    if not turn_arm(food, offset, BLUE_TRAY_POSITION if place_target is None else place_target):
         return False
 
     # 4. Plan: up over the tray, then straight down (all collision checked)
     place_food = np.array([BLUE_TRAY_POSITION[0] + PLACE_DX, BLUE_TRAY_POSITION[1] - PLACE_NEAR_OFFSET, PLACE_FOOD_Z])
+    if place_target is not None:
+        place_food = np.asarray(place_target, dtype=float)
     hover_food = place_food.copy()
     hover_food[2] = HOVER_FOOD_Z
 
@@ -599,7 +628,7 @@ def reset_yarabot():
     return move_turtlebot(home[0], home[1])
 
 
-def run_task(colour):
+def run_task(colour, tray=None, food_bottom_centre=None):
     global held_food, held_offset
 
     if yarabot is None or turtlebot is None:
@@ -616,7 +645,8 @@ def run_task(colour):
         print("No food available for", colour.upper())
         return False
 
-    name = TEST_FOOD if TEST_FOOD in available else random.choice(available)
+    name = TEST_FOOD if TEST_FOOD in available else min(
+        available, key=lambda n: abs(SE3(objects[n].T).t[0] - FOOD_STATIONS[colour][0]))
     food = objects[name]
     print("Task:", colour.upper(), "->", name)
 
@@ -631,7 +661,15 @@ def run_task(colour):
 
     held_food, held_offset = food, offset
 
-    if not transport_food(food, offset):
+    place_target = None
+    if tray is not None:
+        from Maryam_Work.maryam_tray_delivery import TRAY_CENTRE_UNSCALED
+        from Collective_Folder.EnviroParts_S.Full_sim import TRAY_SCALE
+        bottom = np.zeros(3) if food_bottom_centre is None else np.asarray(food_bottom_centre)
+        # Food occupies the left half; ReBot's towel goes on the right half.
+        place_target = (SE3(tray.T) * SE3(*(TRAY_CENTRE_UNSCALED * TRAY_SCALE
+                        + [-0.12, 0, 0.032]))).t - bottom
+    if not transport_food(food, offset, place_target):
         print("Transport unsuccessful")
         return False
 
