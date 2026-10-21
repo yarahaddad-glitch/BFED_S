@@ -1,8 +1,90 @@
 import os
+from pathlib import Path
+import socketserver
+import sys
+from types import SimpleNamespace
 import swift
+import swift.SwiftRoute as swift_route
 from spatialgeometry import Mesh
 from spatialmath import SE3
 from math import pi
+
+assignment_folder = Path(__file__).resolve().parents[2]
+if str(assignment_folder) not in sys.path:
+    sys.path.insert(0, str(assignment_folder))
+
+from Maryam_Work.Maryam_robotclass import MaryamBot
+
+ROBOT_BASE_X = 14.5  # Moving marayms robot and trays 
+ROBOT_FORWARD_Y = -0.05 # maryamas robot movin forward 
+
+TRAY_Y_OFFSET_FROM_BENCH = 0.0
+TRAY_SCALE = 2.0
+TRAY_X_OFFSET_FROM_ROBOT = 0.65  # Metres to each side of the robot.
+GREEN_TRAY_EXTRA_X_OFFSET = 0.40  # Move the green stack farther toward -X.
+
+# DO NOT CHANGE THIS IN MARYAM BOTS DIRECTION AT ALL
+CONVEYOR_DEPTH_SCALE = 0.56
+CONVEYOR_ORIGINAL_FAR_EDGE_Y = 2.53473288
+CONVEYOR_FAR_EDGE_Y = 2.91736668
+
+
+def conveyor_y(original_y):
+    return CONVEYOR_FAR_EDGE_Y + (original_y - CONVEYOR_ORIGINAL_FAR_EDGE_Y) * CONVEYOR_DEPTH_SCALE
+
+
+
+
+def add_maryam_robot(env, objects):
+    """Mount MaryamBot on the bench beside the front bar."""
+    bench_pose = SE3(objects["botCounter"].T)
+    # The countertop is 0.6327448 m above the bench mesh origin.
+    base_pose = SE3(
+        ROBOT_BASE_X,
+        bench_pose.t[1] + ROBOT_FORWARD_Y,
+        bench_pose.t[2] + 0.6327448,
+    )
+    robot = MaryamBot(base=base_pose * SE3.Rz(pi))
+    robot.add_to_env(env)
+    return robot
+
+
+def add_tray_stacks(env, robot):
+    """Add two enlarged trays per colour, neatly stacked beside the robot."""
+    tray_folder = assignment_folder / "Yara_Work" / "EnviroParts"
+    # Scale the mesh centre and height too, preserving stack placement.
+    centre_x = 0.15 * TRAY_SCALE
+    centre_y = -0.0989120895 * TRAY_SCALE
+    tray_height = 0.018043518 * TRAY_SCALE
+    stack_gap = 0.005
+    stacks = {}
+    for colour, side in (("green", -1), ("blue", 1)):
+        path = tray_folder / f"tray_{colour}.dae"
+        if not path.is_file():
+            raise FileNotFoundError(f"Missing tray mesh: {path}")
+        stack_x = robot.base.t[0] + side * TRAY_X_OFFSET_FROM_ROBOT
+        if colour == "green":
+            stack_x -= GREEN_TRAY_EXTRA_X_OFFSET
+        stack_y = robot.base.t[1] - ROBOT_FORWARD_Y + TRAY_Y_OFFSET_FROM_BENCH
+        for level in range(2):
+            tray = Mesh(path.as_posix())
+            tray.scale = [TRAY_SCALE] * 3
+            tray.T = SE3(
+                stack_x - centre_x,
+                stack_y - centre_y,
+                robot.base.t[2] + 0.002 + level * (tray_height + stack_gap),
+            ).A
+            env.add(tray)
+            stacks[f"{colour}_tray_{level + 1}"] = tray
+    return stacks
+
+
+# DO NOT CHNAGE 
+def configure_swift_server():
+    """Prevent idle browser connections from blocking mesh downloads."""
+    class ThreadedSwiftHTTPServer(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+    swift_route.socketserver = SimpleNamespace(TCPServer=ThreadedSwiftHTTPServer)
 
 
 def create_environment(env):
@@ -30,9 +112,13 @@ def create_environment(env):
 
         file_path = os.path.join(folder, filename)
 
+        if not os.path.exists(file_path):
+            print(f"Missing file: {file_path}")
+            return None
+
         mesh = Mesh(file_path)
 
-        mesh.scale = [scale, scale, scale]
+        mesh.scale = [scale, scale, scale] if isinstance(scale, (int, float)) else scale
 
         mesh.T = (
             SE3(x, y, z) *
@@ -41,7 +127,15 @@ def create_environment(env):
             SE3.Ry(ry)
         ).A
 
-        env.add(mesh)
+        print(f"Loading: {name}", flush=True)
+        try:
+            env.add(mesh)
+        except TimeoutError as exc:
+            raise RuntimeError(
+                f"Swift could not load {name} from {mesh.filename}. "
+                "Keep the Swift browser tab open and connected. "
+                "Check its browser console (F12) for failed mesh requests."
+            ) from exc
 
         objects[name] = mesh
         
@@ -110,7 +204,7 @@ def create_environment(env):
 
     botCounter = add_mesh(
         "botCounter", meal_folder, "botCounter.dae",
-        x=12.78, y=4.47, z=-0.004
+        x=12.75, y=4.4, z=-0.006
     )
 
     Conv1_1 = add_mesh(
@@ -165,7 +259,7 @@ def create_environment(env):
 
     kitchen = add_mesh(
         "kitchen", meal_folder, "kitchen.dae",
-        x=13.2, y=1.4, z=0
+        x=13.2, y=1.4, z=0.3
     )
 
     ledtBars = add_mesh(
@@ -235,61 +329,48 @@ def create_environment(env):
         x= 9.27, y= 3.6, z=0.88,
     )
 
-    blueTray1 = add_mesh(
-        "blueTray1", Food_folder, "tray_blue.dae",
-        x =15.25, y=4.5, z=0.625,
-        scale = 2
-    )
-
-    greenTray= add_mesh(
-        "greenTray", Food_folder, "tray_green.dae",
-        x =15.25, y=4.5, z=0.69,
-        scale = 2
-    )
-
-    blueTray2 = add_mesh(
-        "blueTray2", Food_folder, "tray_blue.dae",
-        x =15.25, y=4.5, z=0.76,
+    bluetray = add_mesh(
+        "bluetray", Food_folder, "tray_blue.dae",
+        x = 13, y = 2.97, z =0.68,
         scale = 2
     )
 
     #eat food
     lettuce1= add_mesh(
         "lettuce1", Food_folder, "lettuce.dae",
-        x = 15, y=1.4, z=0.3,
+        x = 15, y=1.45, z=0.6,
         scale= 0.3
     )
 
     lettuce2= add_mesh(
         "lettuce2", Food_folder, "lettuce.dae",
-        x = 14.65, y=1.4, z=0.3,
+        x = 14.65, y=1.45, z=0.6,
         scale= 0.3
     )
 
     lettuce3= add_mesh(
         "lettuce3", Food_folder, "lettuce.dae",
-        x = 14.3, y=1.4, z=0.3,
+        x = 14.3, y=1.45, z=0.6,
         scale= 0.3
     )
 
     cookies1 = add_mesh(
         "cookies1", Food_folder, "cookies.dae",
-        x = 13.6, y = 1.4, z = 0.3,
+        x = 13.6, y = 1.45, z = 0.6,
         scale = 0.3
     )
 
     cookies2 = add_mesh(
         "cookies2", Food_folder, "cookies.dae",
-        x = 13.2, y = 1.4, z = 0.3,
+        x = 13.2, y = 1.45, z = 0.6,
         scale = 0.3
     )
 
     cookies3 = add_mesh(
         "cookies3", Food_folder, "cookies.dae",
-        x = 12.8, y = 1.4, z = 0.3,
+        x = 12.8, y = 1.45, z = 0.6,
         scale = 0.3
     )
-
     nuggets = add_mesh(
         "nuggets", Food_folder, "3nuggets.dae",
         x=0.06, y=0, z=0
