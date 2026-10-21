@@ -15,6 +15,10 @@ Everything you are likely to tune is in the CONFIG block below.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import Counter
+import hashlib
+import json
+from pathlib import Path
 
 import numpy as np
 from scipy.optimize import least_squares
@@ -27,10 +31,10 @@ from spatialmath import SE3
 # centre_x / centre_y numbers inside add_tray_stacks() in swift_simulation.py.
 TRAY_CENTRE_UNSCALED = np.array([0.15, -0.0989120895, 0.0])
 TRAY_HALF_LENGTH_UNSCALED = 0.15
-EDGE_GRIP_INSET = 0.0        # grip the nearest X rim; green needs the full reach
+EDGE_GRIP_INSET = 0.0        # grip the rim; green needs the full reach
 
 # Heights in metres (same idea as your working green-tray pickup).
-GRASP_HEIGHT = 0.05           # tool point sits this far above the tray bottom when "gripping"
+GRASP_HEIGHT = 0.10           # wrist above the rim, leaving room for corner gripping
 APPROACH_HEIGHT = 0.18        # hover height above the tray
 BELT_APPROACH_HEIGHT = 0.18   # hover height above the belt before lowering
 RETREAT_HEIGHT = 0.18         # straight-up retreat after letting go
@@ -157,26 +161,103 @@ class TrayDelivery:
     """
 
     def __init__(self, env, robot, controller, layout: BeltLayout,
-                 tray_scale: float, return_home: bool = False):
+                 tray_scale: float, return_home: bool = False,
+                 animation_speed: float = 1.0, cache_dir=None):
+        if not np.isfinite(animation_speed) or animation_speed <= 0:
+            raise ValueError("animation_speed must be positive")
         self.env = env
         self.robot = robot
         self.controller = controller
         self.layout = layout
         self.centre_local = TRAY_CENTRE_UNSCALED * tray_scale
         self.return_home = return_home
+        self.animation_speed = animation_speed
+        self.half_width = 0.0989120895 * tray_scale
         self.edge_grip_offset = max(
             0.0, TRAY_HALF_LENGTH_UNSCALED * tray_scale - EDGE_GRIP_INSET)
         self.home_xyz = robot.fkine(robot.q).t.copy()
         self.hold_R = None            # None = free orientation
         self._carried = None          # tray mesh currently attached to the tool
         self._relative = None         # tray pose relative to the tool
+        self.payload = []             # (shape, pose relative to tray) for meal props
+        self.cache_dir = Path(cache_dir) if cache_dir else None
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self._grip_seeds = []
+        # Old routes may be invalid after edits, but their grip joints are useful
+        # numerical starting guesses. Every new route still gets full checks.
+        if self.cache_dir is not None and self.cache_dir.exists():
+            for path in self.cache_dir.glob("*.npz"):
+                try:
+                    with np.load(path, allow_pickle=False) as saved:
+                        seed = saved["leg_0"][0].copy()
+                    if seed.shape == (self.robot.n,) and np.all(np.isfinite(seed)):
+                        self._grip_seeds.append(seed)
+                except (OSError, ValueError, KeyError):
+                    pass
+
+    def _cache_path(self, tray_pose, destination, waypoints):
+        if self.cache_dir is None:
+            return None
+        root = Path(__file__).resolve().parents[1]
+        digest = hashlib.sha256()
+        for filename in (
+                "Maryam_Work/maryam_tray_delivery.py",
+                "Maryam_Work/maryamrobot_controller.py",
+                "Maryam_Work/Maryam_robotclass.py",
+                "Maryam_Work/maryam_movements.py",
+                "Collective_Folder/EnviroParts_S/Full_sim.py"):
+            digest.update((root / filename).read_bytes())
+        data = dict(tray=tray_pose.A.tolist(), destination=destination.tolist(),
+                    waypoints=None if waypoints is None else np.asarray(waypoints).tolist(),
+                    base=self.robot.base.A.tolist(), tool=self.robot.tool.A.tolist(),
+                    qmin=self.controller.q_min.tolist(), qmax=self.controller.q_max.tolist(),
+                    dt=self.controller.dt, barrier=self.controller.barrier_y,
+                    obstacles=repr(self.controller.obstacles),
+                    boxes=[(size.tolist(), pose.A.tolist())
+                           for size, pose in self.controller.boxes])
+        digest.update(json.dumps(data, sort_keys=True).encode())
+        return self.cache_dir / f"{digest.hexdigest()}.npz"
+
+    def _cached_plan(self, path):
+        if path is None or not path.is_file():
+            return None
+        try:
+            with np.load(path, allow_pickle=False) as saved:
+                legs = [(str(name), saved[f"leg_{i}"].copy())
+                        for i, name in enumerate(saved["names"])]
+                relative, hold_R = SE3(saved["relative"]), saved["hold_R"].copy()
+            descent = list(reversed(legs[0][1]))
+            q_start, q_above = self.robot.q.copy(), descent[0]
+            count = max(2, int(np.ceil(
+                np.max(np.abs(q_above - q_start)) / (0.35 * self.controller.dt))))
+            approach = np.linspace(q_start, q_above, count + 1)
+            if not all(self.controller.valid(q) for q in approach):
+                return None
+            self.cache_hits += 1
+            print("[CACHE] Reusing saved route; no IK search.", flush=True)
+            return approach, descent, legs, relative, hold_R
+        except (OSError, ValueError, KeyError):
+            return None
+
+    def _save_plan(self, path, plan):
+        if path is None or plan is None:
+            return
+        _, _, legs, relative, hold_R = plan
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {f"leg_{i}": np.asarray(points) for i, (_, points) in enumerate(legs)}
+        np.savez_compressed(path, names=np.array([name for name, _ in legs]),
+                            relative=relative.A, hold_R=hold_R, **data)
+        self._grip_seeds.append(np.asarray(legs[0][1][0]).copy())
 
     # ---- helpers ----
     def _step(self):
         """Called every RMRC sample: keeps a carried tray attached to the tool."""
         if self._carried is not None:
             self._carried.T = (self.robot.fkine(self.robot.q) * self._relative).A
-        self.env.step(self.controller.dt)
+            for shape, relative in self.payload:
+                shape.T = (SE3(self._carried.T) * relative).A
+        self.env.step(self.controller.dt / self.animation_speed)
 
     def _move(self, xyz, label) -> bool:
         print(label, flush=True)
@@ -195,12 +276,39 @@ class TrayDelivery:
         distance = float(np.linalg.norm(np.asarray(b) - np.asarray(a)))
         return int(np.clip(distance / CARRY_SPEED / self.controller.dt, 140, 700))
 
-    def _plan_pick_and_carry(self, tray_pose, grasp, above, place_origin):
+    def tray_clears_robot(self, q, tray_pose):
+        """Separating-axis check of tray volume against every moving link box."""
+        centre = tray_pose.t + tray_pose.R @ (self.centre_local + [0, 0, 0.015])
+        half = np.array([self.edge_grip_offset, self.half_width, 0.015])
+        for body, size in self.controller.body_poses(q):
+            axes = [*tray_pose.R.T, *body.R.T]
+            axes.extend(np.cross(a, b) for a in tray_pose.R.T for b in body.R.T)
+            delta = body.t - centre
+            separated = False
+            for axis in axes:
+                length = np.linalg.norm(axis)
+                if length < 1e-8:
+                    continue
+                axis = axis / length
+                radius = (np.abs(axis @ tray_pose.R) @ half
+                          + np.abs(axis @ body.R) @ (size / 2))
+                if abs(axis @ delta) > radius + 0.002:
+                    separated = True
+                    break
+            if not separated:
+                return False
+        return True
+
+    def _plan_pick_and_carry(self, tray_pose, grasp, above, place_origin,
+                             waypoints=None, carry_validator=None):
         """Search grip configurations and verify the whole route before moving."""
         controller = self.controller
+        rejected = Counter()
         q_start = self.robot.q.copy()
         rng = np.random.default_rng(24)
-        seeds = [q_start, np.zeros(self.robot.n)]
+        nearby = sorted(self._grip_seeds,
+                        key=lambda q: np.linalg.norm(self.robot.fkine(q).t - grasp))
+        seeds = nearby[:4] + [q_start, np.zeros(self.robot.n)]
         seeds.extend(rng.uniform(controller.q_min, controller.q_max, (60, self.robot.n)))
         candidates = [(seed, None) for seed in seeds]
         # Explicit downward grips avoid arbitrary wrist poses from position-only IK.
@@ -222,16 +330,30 @@ class TrayDelivery:
             )
             q_grasp = solution.x
             if not controller.valid(q_grasp) or not controller.reached(q_grasp, grasp, None):
+                rejected["grip unreachable"] += 1
                 continue
             ee = self.robot.fkine(q_grasp)
             hold_R = ee.R.copy()
             relative = ee.inv() * tray_pose
+            if waypoints is None and not self.tray_clears_robot(q_grasp, tray_pose):
+                rejected["grip intersects tray"] += 1
+                continue
             ee_offset = hold_R @ relative.t
             targets = [
                 ("lift", above),
+                ("clear robot beside belt", place_origin + [
+                    0.55 if tray_pose.t[0] + self.centre_local[0] > self.robot.base.t[0]
+                    else -0.55, 0, BELT_APPROACH_HEIGHT] - ee_offset),
                 ("over belt", place_origin + [0, 0, BELT_APPROACH_HEIGHT] - ee_offset),
                 ("lower onto belt", place_origin - ee_offset),
             ]
+            if waypoints is not None:
+                targets = [("lift", above)]
+                targets.extend(
+                    (f"handout waypoint {i + 1}",
+                     np.asarray(centre) - tray_pose.R @ self.centre_local - ee_offset)
+                    for i, centre in enumerate(waypoints))
+                targets.append(("slide through serving gap", place_origin - ee_offset))
             legs, q = [], q_grasp
             for name, target in targets:
                 path = controller.segment(
@@ -252,10 +374,20 @@ class TrayDelivery:
                             path = first + second[1:]
                             break
                 if path is None:
+                    rejected[name] += 1
                     break
                 legs.append((name, path))
                 q = path[-1]
             if len(legs) != len(targets):
+                continue
+            if waypoints is None and not all(self.tray_clears_robot(q, self.robot.fkine(q) * relative)
+                       for _, path in legs for q in path):
+                rejected["carried tray intersects robot"] += 1
+                continue
+            if carry_validator is not None and not all(
+                    carry_validator(self.robot.fkine(q) * relative)
+                    for _, path in legs for q in path):
+                rejected["loaded tray would clip serving gap"] += 1
                 continue
             placed = self.robot.fkine(q) * relative
             if (np.linalg.norm(placed.t - place_origin) > RELEASE_POS_TOL
@@ -271,31 +403,83 @@ class TrayDelivery:
             approach = np.linspace(q_start, q_above, count + 1)
             if not all(controller.valid(q) for q in approach):
                 continue
+            if waypoints is None and not all(self.tray_clears_robot(q, tray_pose)
+                       for q in list(approach) + list(descent)):
+                rejected["approach intersects tray"] += 1
+                continue
             print(f"[PLAN] Complete pickup and carry verified (grip {attempt}).", flush=True)
             return approach, descent, legs, relative, hold_R
+        print("[PLAN] Rejected routes:", dict(rejected), flush=True)
         return None
 
     # ---- main entry point ----
-    def deliver(self, tray_mesh, label: str = "tray") -> DeliveryResult:
-        self.hold_R = None
-        self._carried = None
-
+    def prepare(self, tray_mesh, destination=None, waypoints=None,
+                carry_validator=None):
+        """Plan without moving; callers can prepare both colours before scanning."""
         tray_pose = SE3(tray_mesh.T)
         centre = tray_pose.t + tray_pose.R @ self.centre_local
-        # Choose the X rim nearest the robot in the tray's local frame.
+        # Pick from the corner closest to the robot, not the middle of a rim.
         robot_local = tray_pose.R.T @ (self.robot.base.t - centre)
-        edge_local = np.array([
-            np.sign(robot_local[0]) * self.edge_grip_offset, 0.0, 0.0])
-        pickup = centre + tray_pose.R @ edge_local
-        above = pickup + np.array([0.0, 0.0, APPROACH_HEIGHT])
-        grasp = pickup + np.array([0.0, 0.0, GRASP_HEIGHT])
-        print(f"\n[PICK] {label}: tray centre {np.round(centre, 3)}")
-        print(f"[PICK] Near-edge grip {np.round(grasp, 3)}")
-
+        rims = [np.array([x, y, 0.0])
+                for x in (-self.edge_grip_offset, self.edge_grip_offset)
+                for y in (-self.half_width, self.half_width)]
+        rims.sort(key=lambda rim: np.linalg.norm((robot_local - rim)[:2]))
+        rims = rims[:1]
+        if centre[0] < self.robot.base.t[0]:
+            # Preserve the working green-stack grip; the corner correction is
+            # for the blue stack on the other side of the robot.
+            rims = [np.array([self.edge_grip_offset, 0.0, 0.0])]
+        if waypoints is not None:
+            # Standard serving grip: trailing rim keeps the wrist inside the bars.
+            rims = [np.array([0.0, -self.half_width, 0.0])]
         tray_at_grasp = tray_pose
-        place_origin = self.layout.place_centre - tray_at_grasp.R @ self.centre_local
+        destination = (self.layout.place_centre if destination is None
+                       else np.asarray(destination, dtype=float))
+        place_origin = destination - tray_at_grasp.R @ self.centre_local
+        cache_path = self._cache_path(tray_pose, destination, waypoints)
+        cached = self._cached_plan(cache_path)
+        if waypoints is None and cached is not None and not all(
+                self.tray_clears_robot(q, tray_pose) for q in cached[0]):
+            cached = None
+        if cached is not None:
+            return (self.robot.q.copy(), tray_pose, place_origin, cached)
+        self.cache_misses += 1
         print("[PLAN] Searching grip poses for the complete transfer...", flush=True)
-        plan = self._plan_pick_and_carry(tray_pose, grasp, above, place_origin)
+        plan = None
+        for edge_local in rims:
+            print(f"[GRIP] Trying rim offset {np.round(edge_local, 3)}", flush=True)
+            pickup = centre + tray_pose.R @ edge_local
+            above = pickup + np.array([0.0, 0.0, APPROACH_HEIGHT])
+            grasp = pickup + np.array([0.0, 0.0, GRASP_HEIGHT])
+            # Fast necessary reach check for this DH chain, before costly IK.
+            # The first joint's origin is fixed; the remaining links cannot
+            # reach beyond the sum of their lengths in any configuration.
+            shoulder = self.robot.base * self.robot.links[0].A(0.0)
+            reach = sum(np.hypot(link.a, link.d) for link in self.robot.links[1:])
+            reach += np.linalg.norm(self.robot.tool.t)
+            final_tool = destination + (grasp - centre)
+            if np.linalg.norm(final_tool - shoulder.t) > reach + RELEASE_POS_TOL:
+                print("[GRIP] This rim puts the final tool position out of reach.",
+                      flush=True)
+                continue
+            plan = self._plan_pick_and_carry(
+                tray_pose, grasp, above, place_origin, waypoints=waypoints,
+                carry_validator=carry_validator)
+            if plan is not None:
+                break
+        self._save_plan(cache_path, plan)
+        return (self.robot.q.copy(), tray_pose, place_origin, plan)
+
+    def deliver(self, tray_mesh, label: str = "tray", destination=None,
+                waypoints=None, prepared=None, carry_validator=None) -> DeliveryResult:
+        self.hold_R = None
+        self._carried = None
+        if prepared is None:
+            prepared = self.prepare(tray_mesh, destination, waypoints, carry_validator)
+        q_start, tray_at_grasp, place_origin, plan = prepared
+        if (not np.allclose(self.robot.q, q_start, atol=1e-8)
+                or not np.allclose(tray_mesh.T, tray_at_grasp.A, atol=1e-8)):
+            return DeliveryResult("NOT_PICKED", "Prepared route is stale; scene changed")
         if plan is None:
             return DeliveryResult("NOT_PICKED", "No verified pickup and carry configuration")
         approach, descent, legs, relative, hold_R = plan
@@ -321,17 +505,21 @@ class TrayDelivery:
         self._carried = None                      # released: tray stays here
         on_target = (position_error <= RELEASE_POS_TOL
                      and rotation_error <= np.deg2rad(RELEASE_ROT_TOL_DEG))
-        print("[PLACE] Tray released on the conveyor belt", flush=True)
+        print(f"[PLACE] {label} released at destination", flush=True)
 
         # 4. Retreat straight up, still holding the same orientation
-        retreat = self.robot.fkine(self.robot.q).t.copy()
-        retreat[2] += RETREAT_HEIGHT
-        self._move(retreat, "Retreat vertically")
+        if waypoints is not None:
+            # Withdraw through the opening before raising the empty gripper.
+            self._execute(list(reversed(legs[-1][1])))
+            self._execute(list(reversed(legs[-2][1])))
+        else:
+            self._execute(list(reversed(legs[-1][1])))
+        print("[RETREAT] Reused the verified approach path.", flush=True)
         self.hold_R = None
         if self.return_home:
             self._move(self.home_xyz, "Return home")
 
         if on_target:
-            return DeliveryResult("PLACED", "Tray placed on the belt")
+            return DeliveryResult("PLACED", "Tray placed at destination")
         return DeliveryResult("PLACED_OFF_TARGET",
                               "Tray released but outside the placement tolerance")

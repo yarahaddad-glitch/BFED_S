@@ -4,3 +4,6 @@ __pycache__/
 
 # Ignore compiled Python files
 *.pyc
+
+# Locally verified MealBot motion routes (rebuilt when geometry/config changes).
+.mealbot_routes/

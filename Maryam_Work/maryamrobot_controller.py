@@ -20,12 +20,16 @@ def stl_bounds(filename, unit_scale=1.0):
 
 class RobotController:
     def __init__(self, robot, stl_files, obstacles=None, *, stl_scale=1.0,
-                 box_padding=0.008, clearance=0.015, dt=0.035):
+                 box_padding=0.008, clearance=0.015, dt=0.035,
+                 barrier_y=None):
         self.robot = robot
         self.obstacles = list(obstacles or [])
-        if not self.obstacles:
+        if not self.obstacles and barrier_y is None:
             print("[RMRC] No external obstacles configured; obstacle avoidance is inactive.")
+        elif barrier_y is not None:
+            print(f"[RMRC] Robot link bounds must stay behind Y={barrier_y:.3f}.")
         self.dt = dt
+        self.barrier_y = barrier_y
         self.clearance = clearance
         self.joint_margin = np.deg2rad(5)
 
@@ -76,9 +80,13 @@ class RobotController:
 
     def colliding(self, q):
         """Approximate external obstacle check; not a self-collision checker."""
-        if not self.obstacles:
+        if not self.obstacles and self.barrier_y is None:
             return False
         for body_pose, size in self.body_poses(q):
+            if self.barrier_y is not None:
+                max_y = body_pose.t[1] + np.abs(body_pose.R[1]) @ (size / 2)
+                if max_y >= self.barrier_y:
+                    return True
             for obs in self.obstacles:
                 if obs["type"] == "sphere":
                     center = np.asarray(obs["center"], dtype=float)
