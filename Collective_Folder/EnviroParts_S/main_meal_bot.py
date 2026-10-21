@@ -1,28 +1,10 @@
-"""Smart MealBot main.
-
-Hold a colour card up to the webcam:
-  GREEN / BLUE -> the Kawasaki (RMRC) picks the matching tray, sets it on the
-                  conveyor belt, and the belt carries it to the middle, closer
-                  to the food area where Yara adds the food.
-  YELLOW       -> "ISOLATION PRISONER LOOSE" warning, no movement.
-  Press Q in the camera window to finish.
-
-Where things live
-  Full_sim.py                  scene, robot and tray stacks
-  maryam_meal_dispatch.py      camera + colour -> tray decision + yellow alert
-  maryam_tray_delivery.py      RMRC pick / place, tray stacks, belt animation
-  maryamrobot_controller.py    your RMRC controller (unchanged)
-  main_meal_bot.py (this)      wires everything together
-
-Swift-only demonstration. RMRC validates joint limits and configured obstacles;
-it does not validate robot self-collision.
-"""
+# main for maryam movement and meal delivery demo
 import sys
 from pathlib import Path
-
 import numpy as np
 import swift
 from spatialmath import SE3
+from spatialgeometry import Cuboid
 
 try:
     from spatialgeometry import Sphere
@@ -35,29 +17,34 @@ if str(ASSIGNMENT_ROOT) not in sys.path:
 
 from Maryam_Work.maryam_meal_dispatch import ColourScanner, build_default_dispatcher
 from Maryam_Work.maryam_tray_delivery import (
-    BeltLayout, ConveyorBelt, TrayDelivery, TrayStacks)
+    BeltLayout, TrayDelivery, TrayStacks, TRAY_CENTRE_UNSCALED)
+
 from Maryam_Work.maryamrobot_controller import RobotController
 from Collective_Folder.EnviroParts_S.Full_sim import (
     TRAY_SCALE, add_maryam_robot, add_tray_stacks,
     configure_swift_server, create_environment)
 
-# ============================================================
-# CONFIG  - the numbers you are most likely to change
-# ============================================================
-# Where the robot sets the tray down, measured from the ROBOT BASE (metres).
-# Keep it close to the robot so RMRC can reach it.
 PLACE_FROM_ROBOT = (-0.30, -0.45)      # (dx, dy)
 BELT_SURFACE_Z = 0.67                  # tray bottom: lowered 3 cm onto the belt
 BELT_MIDDLE_X = 14.96                  # destination toward +X, opposite the previous travel
-BELT_SPEED = 0.15                      # metres per second
+BELT_SPEED = 0.45                      # metres per second (3x original speed)
+BELT_FAR_LANE_Y = 2.75                 # centre of the opposite straight belt
+
+
+HANDOUT_GAP_LOCAL = (0.82485, 0.0, 0.145)  # bottom 18 mm above bench (Z 0.6267)
+HANDOUT_SIDE_CLEARANCE = 0.28          # tray centre distance each side of bars
+HANDOUT_INSERTION = -0.12             # front rim protrudes; wrist stays well inside
+LOADED_TRAY_HEIGHT = 0.07             # low food props fit above bench, below opening
+BAR_ROBOT_LIMIT_Y = 4.64              # all robot link boxes stay inside the bars
+ROUTE_CACHE_DIR = ASSIGNMENT_ROOT / ".mealbot_routes"
+HANDOUT_PAUSE = 2.0                    # seconds before the recipient takes it
+ROBOT_ANIMATION_SPEED = 3.0            # faster Swift playback; keep all planned samples
 
 SHOW_MARKERS = False                   # optional red/yellow debug target markers
 RETURN_HOME_AFTER_PLACE = False        # True = robot goes back to its start position each cycle
 
 
-# ============================================================
-# 1. SCENE
-# ============================================================
+# Scene 
 def build_scene():
     configure_swift_server()
     env = swift.Swift()
@@ -76,8 +63,9 @@ def build_controller(maryambot):
                    for i in range(1, 7)]
     return RobotController(
         maryambot, robot_files,
-        obstacles=[],            # no external obstacles configured yet
+        obstacles=[],            # bar-plane guard below; full scene collision is separate
         stl_scale=1.0,
+        barrier_y=BAR_ROBOT_LIMIT_Y,
     )
 
 
@@ -115,6 +103,111 @@ def add_marker(env, xyz, colour):
         print("[MARKER] could not add marker:", exc)
 
 
+def carry_full_loop(env, objects, tray, layout, dt, colour):
+    """Follow all four belt sections, returning to the exact pickup pose."""
+    if layout.speed <= 0 or dt <= 0:
+        raise ValueError("Belt speed and animation timestep must be positive")
+    initial = SE3(tray.T)
+    local_centre = TRAY_CENTRE_UNSCALED * TRAY_SCALE
+    start = initial.t + initial.R @ local_centre
+    left = mesh_xyz(objects, "Conv2_2", (11.92, 3.429, 0.58))[0]
+    right = mesh_xyz(objects, "Conv2_1", (14.96, 3.429, 0.58))[0]
+    near_y, far_y = layout.place_centre[1], BELT_FAR_LANE_Y
+    if near_y <= far_y or not left < start[0] < right:
+        raise ValueError("Set-down point must lie between the conveyor ends")
+    # Conv2 meshes are straight cross-belts, not semicircular end caps.
+    points = [np.array([x, y, start[2]]) for x, y in (
+        (right, near_y), (right, far_y), (left, far_y), (left, near_y))]
+    points.append(start)
+    total_distance = sum(np.linalg.norm(b - a)
+                         for a, b in zip([start] + points[:-1], points))
+    travelled = 0.0
+    payload = []
+    current = start.copy()
+    print("[BELT] Full lap: near lane, far lane, return to pickup.", flush=True)
+    for target in points:
+        distance = float(np.linalg.norm(target - current))
+        count = max(1, int(np.ceil(distance / (layout.speed * dt))))
+        for k in range(1, count + 1):
+            centre = current + (target - current) * k / count
+            tray.T = SE3.Rt(initial.R, centre - initial.R @ local_centre).A
+            if not payload and travelled + distance * k / count >= total_distance / 2:
+                print("[MEAL] Halfway around: adding food and paper towel.", flush=True)
+                payload = add_placeholder_meal(env, tray, colour, dt)
+            for shape, relative in payload:
+                shape.T = (SE3(tray.T) * relative).A
+            env.step(dt)
+        travelled += distance
+        current = target
+    tray.T = initial.A
+    for shape, relative in payload:
+        shape.T = (initial * relative).A
+    return payload
+
+
+def add_placeholder_meal(env, tray, colour, dt):
+    """Temporary colour-specific meal and folded towel; replace with teammate assets."""
+    centre = TRAY_CENTRE_UNSCALED * TRAY_SCALE
+    food_colour = ((0.20, 0.65, 0.12, 1.0) if colour.lower() == "green"
+                   else (0.65, 0.30, 0.10, 1.0))
+    props = []
+    towel = Cuboid(scale=[0.13, 0.15, 0.006], color=(0.98, 0.98, 0.94, 1))
+    props.append((towel, SE3(*(centre + [0.17, 0, 0.045]))))
+    for x, y in ((-0.12, -0.055), (-0.12, 0.055), (-0.025, 0)):
+        food = Cuboid(scale=[0.08, 0.07, 0.03], color=food_colour)
+        props.append((food, SE3(*(centre + [x, y, 0.055]))))
+    for shape, relative in props:
+        shape.T = (SE3(tray.T) * SE3(0, 0, 0.12) * relative).A
+        env.add(shape)
+    steps = max(1, int(np.ceil(0.6 / dt)))
+    for k in range(1, steps + 1):
+        for shape, relative in props:
+            shape.T = (SE3(tray.T) * SE3(0, 0, 0.12 * (1 - k / steps))
+                       * relative).A
+        env.step(dt)
+    return props
+
+
+def serving_gap_validator(gap):
+    """Check the loaded tray envelope at every planned sample crossing the bars."""
+    local_centre = TRAY_CENTRE_UNSCALED * TRAY_SCALE
+    corners = np.array([local_centre + [x, y, z]
+                        for x in (-0.30, 0.30)
+                        for y in (-0.20, 0.20)
+                        for z in (0.0, LOADED_TRAY_HEIGHT)])
+
+    def fits(pose):
+        world = corners @ pose.R.T + pose.t
+        lo, hi = world.min(axis=0), world.max(axis=0)
+        if lo[2] < 0.6267448 + 0.008:
+            return False
+        if hi[1] < gap[1] - 0.04 or lo[1] > gap[1] + 0.04:
+            return True
+        # 8 mm inset from the measured opening; reject tilted/clipping routes.
+        return (lo[0] >= gap[0] - 0.40355 + 0.008
+                and hi[0] <= gap[0] + 0.40355 - 0.008
+                and hi[2] <= 0.7338 - 0.008)
+    return fits
+
+
+def collect_served_meal(env, tray, payload, gap, dt):
+    """Recipient pulls the released tray through; robot remains inside the bars."""
+    start = SE3(tray.T)
+    centre = start.t + start.R @ (TRAY_CENTRE_UNSCALED * TRAY_SCALE)
+    distance = gap[1] + 0.30 - centre[1]
+    steps = max(1, int(np.ceil(distance / (0.30 * dt))))
+    poses = [SE3.Rt(start.R, start.t + [0, distance * k / steps, 0])
+             for k in range(1, steps + 1)]
+    if not all(serving_gap_validator(gap)(pose) for pose in poses):
+        raise RuntimeError("Served meal cannot clear the opening; holding tray.")
+    print("[HANDOUT] Recipient takes the tray; robot stays behind the bars.", flush=True)
+    for pose in poses:
+        tray.T = pose.A
+        for shape, relative in payload:
+            shape.T = (pose * relative).A
+        env.step(dt)
+
+
 # ============================================================
 # 3. MAIN LOOP
 # ============================================================
@@ -134,8 +227,9 @@ def main():
     dispatcher = build_default_dispatcher()
     stacks = TrayStacks(trays)
     delivery = TrayDelivery(env, maryambot, controller, layout,
-                            tray_scale=TRAY_SCALE, return_home=RETURN_HOME_AFTER_PLACE)
-    belt = ConveyorBelt(env, layout, tray_scale=TRAY_SCALE, dt=controller.dt)
+                            tray_scale=TRAY_SCALE, return_home=RETURN_HOME_AFTER_PLACE,
+                            animation_speed=ROBOT_ANIMATION_SPEED,
+                            cache_dir=ROUTE_CACHE_DIR)
 
     while True:
         # ---- camera: which colour is being held up? ----
@@ -164,12 +258,37 @@ def main():
         outcome = delivery.deliver(tray_mesh, label=key)
         print(f"[{outcome.status}] {outcome.message}")
 
-        # ---- belt carries it to the middle ----
+        # ---- one full lap, temporary meal loading, pickup and handout ----
         if outcome.on_belt:
             stacks.mark_used(key)
-            belt.carry_to_middle(tray_mesh)
+            delivery.payload = carry_full_loop(
+                env, objects, tray_mesh, layout, controller.dt, colour)
+            gap = mesh_xyz(objects, "frontBars", (13.4, 4.7, 0.5))
+            gap = gap + np.asarray(HANDOUT_GAP_LOCAL)
+            inside = gap + [0, -HANDOUT_SIDE_CLEARANCE, 0]
+            handout = gap + [0, HANDOUT_INSERTION, 0]
+            # Align at belt height inside the bars, lower, then cross horizontally.
+            align = inside.copy()
+            align[2] = BELT_SURFACE_Z + 0.18
+            outcome = delivery.deliver(tray_mesh, label=f"{key} loaded meal",
+                                       destination=handout, waypoints=[align, inside],
+                                       carry_validator=serving_gap_validator(gap))
+            if outcome.status != "PLACED":
+                print(f"[HANDOUT] {outcome.message}. Stopping for inspection; "
+                      "the loaded meal has not been marked delivered.")
+                break
+            for _ in range(max(1, int(np.ceil(HANDOUT_PAUSE / controller.dt)))):
+                env.step(controller.dt)
+            collect_served_meal(
+                env, tray_mesh, delivery.payload, gap, controller.dt)
+            # Recipient takes the meal; clear the serving position for the next order.
+            for shape, _ in delivery.payload:
+                env.remove(shape)
+            env.remove(tray_mesh)
+            delivery.payload = []
             dispatcher.mark_delivered(result.order)
-            print(f"{colour} tray delivered. {stacks.remaining(colour)} left in that stack.")
+            print(f"{colour} meal handed out. {stacks.remaining(colour)} trays left. "
+                  "Reopening camera for the next colour card.")
         dispatcher.reset(colour)          # allow the next card of this colour
 
     env.hold()
