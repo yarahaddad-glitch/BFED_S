@@ -88,23 +88,31 @@ class DetectionResult:
 
 
 class ColourScanner:
-    """Laptop-webcam scanner. Hold a colour card inside the white box."""
+    """Laptop-webcam scanner. Hold a colour card inside the white box.
+
+    The same camera/window is kept open after a YELLOW alert while the
+    operator changes cards. GREEN/BLUE (or Q) closes the camera before the
+    main program starts moving the robot or exits.
+    """
 
     def __init__(self, camera_index: int = 0, stable_frames: int = 12,
                  min_coverage: float = 0.30,
                  window_title: str = "MealBot - Colour Scanner",
                  alert_display_seconds: float = 2.5):
         self.camera_index = camera_index
-        self.stable_frames = stable_frames        # frames that must agree
-        self.min_coverage = min_coverage          # share of the centre box
+        self.stable_frames = max(1, int(stable_frames))
+        self.min_coverage = min_coverage
         self.window_title = window_title
         self.alert_display_seconds = alert_display_seconds
+        self._camera = None
+        self._window_open = False
+        self._alert_card_held = None  # avoid retriggering YELLOW continuously
 
     # ---- pure image logic (testable without a camera) ----
     def classify(self, frame):
         """Return (colour or None, coverage of that colour, (x1, y1, x2, y2))."""
         height, width = frame.shape[:2]
-        x1, x2 = width // 3, 2 * width // 3       # scan only the centre region
+        x1, x2 = width // 3, 2 * width // 3
         y1, y2 = height // 3, 2 * height // 3
         hsv = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
         coverage = {}
@@ -115,57 +123,120 @@ class ColourScanner:
         colour = best if coverage[best] >= self.min_coverage else None
         return colour, coverage[best], (x1, y1, x2, y2)
 
-    # ---- camera loop ----
+    # ---- camera lifetime: open once per scan session ----
     def _open_camera(self):
+        if self._camera is not None and self._camera.isOpened():
+            return self._camera
+
+        # DirectShow is commonly reliable with OpenCV on Windows.
         backend = cv2.CAP_DSHOW if sys.platform.startswith("win") else cv2.CAP_ANY
         camera = cv2.VideoCapture(self.camera_index, backend)
         if not camera.isOpened():
+            camera.release()
             raise RuntimeError(
                 "Laptop camera unavailable. Close Teams/Zoom or try camera_index=1.")
         camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self._camera = camera
         return camera
 
+    def _open_window(self):
+        if not self._window_open:
+            cv2.namedWindow(self.window_title, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(self.window_title, 400, 300)
+            self._window_open = True
+
+    def close(self):
+        """Release the webcam and this scanner's window (safe to call twice)."""
+        camera, self._camera = self._camera, None
+        if camera is not None:
+            camera.release()
+        if self._window_open:
+            try:
+                cv2.destroyWindow(self.window_title)
+                cv2.waitKey(1)  # let OpenCV process the window-close event
+            except cv2.error:
+                pass
+            self._window_open = False
+        self._alert_card_held = None
+
     def scan(self) -> DetectionResult:
-        """Block until a colour is held steady (or Q is pressed)."""
-        camera = self._open_camera()
-        cv2.namedWindow(self.window_title, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.window_title, 400, 300)
-        votes = deque(maxlen=self.stable_frames)
-        result = DetectionResult(None)
+        """Wait for a stable colour or Q, without cycling the webcam on alerts."""
+        keep_camera_for_next_scan = False
         try:
+            camera = self._open_camera()
+            self._open_window()
+            votes = deque(maxlen=self.stable_frames)
+            card_removed_frames = 0
+            read_failures = 0
+
             while True:
                 ok, frame = camera.read()
                 if not ok:
-                    raise RuntimeError("Webcam opened but no image was received.")
+                    read_failures += 1
+                    if read_failures >= 5:
+                        raise RuntimeError(
+                            "Webcam opened but stopped providing frames. "
+                            "Close other camera apps and retry.")
+                    cv2.waitKey(30)
+                    continue
+                read_failures = 0
                 colour, coverage, box = self.classify(frame)
+
+                # The main loop calls scan() again immediately on an ALERT.
+                # Don't trigger the same YELLOW card repeatedly; require it
+                # to leave the white box for a few frames before rearming.
+                if self._alert_card_held is not None:
+                    votes.clear()
+                    if colour == self._alert_card_held:
+                        card_removed_frames = 0
+                        prompt = "REMOVE YELLOW CARD TO RESET"
+                    else:
+                        card_removed_frames += 1
+                        prompt = "READYING NEXT SCAN..."
+                        if card_removed_frames >= 6:
+                            self._alert_card_held = None
+                            card_removed_frames = 0
+                    self._draw_overlay(frame, box, colour, prompt=prompt)
+                    cv2.imshow(self.window_title, frame)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        return DetectionResult(None)
+                    continue
+
                 votes.append(colour)
                 self._draw_overlay(frame, box, colour)
                 cv2.imshow(self.window_title, frame)
 
+                # Poll keys even when the detection becomes stable this frame.
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    return DetectionResult(None)
+
                 if (len(votes) == self.stable_frames and colour is not None
                         and all(v == colour for v in votes)):
                     result = DetectionResult(colour, coverage)
-                    print(f"DETECTED: {colour}")
-                    break
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
-            if result.is_alert:
-                self._show_alert(camera, ALERT_COLOURS[result.colour])
+                    print(f"DETECTED: {colour}", flush=True)
+                    if result.is_alert:
+                        self._alert_card_held = colour
+                        if self._show_alert(camera, ALERT_COLOURS[colour]):
+                            return DetectionResult(None)
+                        # The caller will immediately call scan() again on
+                        # an ALERT. Keep the existing window/capture alive.
+                        keep_camera_for_next_scan = True
+                    return result
         finally:
-            camera.release()
-            cv2.destroyAllWindows()
-        return result
+            if not keep_camera_for_next_scan:
+                self.close()
 
     # ---- drawing ----
-    def _draw_overlay(self, frame, box, colour):
+    def _draw_overlay(self, frame, box, colour, prompt=None):
         x1, y1, x2, y2 = box
         height = frame.shape[0]
         cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
         cv2.putText(frame, f"Scanning: {colour or 'SHOW COLOUR CARD'}", (15, 35),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
-        cv2.putText(frame, "Hold card in box | Q = cancel", (15, height - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+        cv2.putText(frame, prompt or "Hold card in box | Q = cancel",
+                    (15, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                    (255, 255, 255), 2)
 
     @staticmethod
     def _put_centered(frame, text, y, scale, colour, thickness):
@@ -175,17 +246,19 @@ class ColourScanner:
         cv2.putText(frame, text, (max(5, (width - text_w) // 2), y),
                     cv2.FONT_HERSHEY_SIMPLEX, scale, colour, thickness)
 
-    def _show_alert(self, camera, message: str):
-        """Flashing red warning on the live camera feed."""
+    def _show_alert(self, camera, message: str) -> bool:
+        """Display the existing flashing warning. Return True if Q was pressed."""
         end = time.monotonic() + self.alert_display_seconds
         while time.monotonic() < end:
             ok, frame = camera.read()
             if not ok:
-                break
+                raise RuntimeError("Webcam stopped providing frames during alert.")
             height, width = frame.shape[:2]
-            if int(time.monotonic() * 4) % 2 == 0:       # flash ~2 Hz
-                cv2.rectangle(frame, (0, 0), (width - 1, height - 1), (0, 0, 255), 14)
-                cv2.rectangle(frame, (0, height // 2 - 55), (width, height // 2 + 45),
+            if int(time.monotonic() * 4) % 2 == 0:
+                cv2.rectangle(frame, (0, 0), (width - 1, height - 1),
+                              (0, 0, 255), 14)
+                cv2.rectangle(frame,
+                              (0, height // 2 - 55), (width, height // 2 + 45),
                               (0, 0, 255), -1)
                 self._put_centered(frame, "WARNING", height // 2 - 15, 1.0,
                                    (255, 255, 255), 3)
@@ -193,12 +266,17 @@ class ColourScanner:
                                    (255, 255, 255), 2)
             cv2.imshow(self.window_title, frame)
             if cv2.waitKey(30) & 0xFF == ord("q"):
-                break
+                return True
+        return False
 
 
 def detect_tray_colour(camera_index: int = 0):
-    """Backwards-compatible helper: returns 'GREEN', 'BLUE', 'YELLOW' or None."""
-    return ColourScanner(camera_index=camera_index).scan().colour
+    """Backwards-compatible helper: returns GREEN, BLUE, YELLOW or None."""
+    scanner = ColourScanner(camera_index=camera_index)
+    try:
+        return scanner.scan().colour
+    finally:
+        scanner.close()
 
 
 # ============================================================
@@ -338,6 +416,10 @@ def build_default_dispatcher(tray_objects: Optional[dict] = None) -> MealDispatc
 # ============================================================
 if __name__ == "__main__":
     dispatcher = build_default_dispatcher()
-    result = dispatcher.handle(ColourScanner().scan())
+    scanner = ColourScanner()
+    try:
+        result = dispatcher.handle(scanner.scan())
+    finally:
+        scanner.close()
     print(f"[{result.action}] {result.message}")
     print("\n".join(dispatcher.status_lines()))
