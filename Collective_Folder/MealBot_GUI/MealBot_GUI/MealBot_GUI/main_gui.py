@@ -289,10 +289,12 @@ class MainWindow(QMainWindow):
         emergency_stop.setObjectName("stop")
         emergency_stop.setToolTip("EMERGENCY STOP — latch the simulated system")
         emergency_stop.setFixedHeight(26)
-        emergency_stop.clicked.connect(
-            lambda checked=False: self.system.e_stop("GUI simulation stop")
-        )
+        emergency_stop.clicked.connect(lambda checked=False: self.stop_all())
         left.addWidget(emergency_stop)
+
+        from PySide6.QtGui import QShortcut, QKeySequence
+        for key, action in (("E", self.stop_all), ("H", self.home_all), ("R", self.resume_task)):
+            QShortcut(QKeySequence(key), self, activated=action)
 
         self.system.changed.connect(self.on_state)
         self.navigate(0)
@@ -417,15 +419,19 @@ class MainWindow(QMainWindow):
     def make_recovery_page(self):
         page = SimplePage(
             "Emergency / Recovery",
-            "STOP latches simulated motion. Acknowledge, then press Start separately. "
+            "STOP freezes every robot. Home sends them to their home pose (still holding items). "
+            "Reset resumes the task from where it stopped. "
             "Yara's hardware and recovery hooks: Collective_Folder/workcell_actions.py.",
         )
-        reset = QPushButton("Reset / acknowledge stop")
-        reset.clicked.connect(lambda checked=False: self.reset_stop())
-        page.layout().insertWidget(2, reset)
+        home = QPushButton("Home (robots go to home pose)")
+        home.clicked.connect(lambda checked=False: self.home_all())
+        page.layout().insertWidget(2, home)
+        reset = QPushButton("Reset (resume the task)")
+        reset.clicked.connect(lambda checked=False: self.resume_task())
+        page.layout().insertWidget(3, reset)
         clear = QPushButton('Clear safety test actor')
         clear.clicked.connect(self.clear_safety_actor)
-        page.layout().insertWidget(3, clear)
+        page.layout().insertWidget(4, clear)
         return page
 
     def make_safety_page(self):
@@ -616,6 +622,26 @@ class MainWindow(QMainWindow):
         self.dashboard_state.setText(state)
         if state == "ESTOP" and self.pages.currentIndex() not in (3, 7):
             self.navigate(4)
+
+    def stop_all(self):
+        """STOP: freeze every robot in place (task paused, not cancelled)."""
+        if self.runtime and hasattr(self.runtime, "estop_stop"):
+            self.runtime.estop_stop("GUI stop")
+        self.system.e_stop("GUI simulation stop")
+
+    def home_all(self):
+        """HOME: (after STOP) robots glide to their home pose, still carrying anything they hold."""
+        if self.runtime and hasattr(self.runtime, "estop_home"):
+            self.runtime.estop_home()
+
+    def resume_task(self):
+        """RESET: release the stop and carry on with the task that was running."""
+        if self.system.state == "ESTOP":
+            self.system.reset()                      # clear the GUI/runtime stop latch
+        if self.runtime and hasattr(self.runtime, "estop_resume"):
+            self.runtime.estop_resume()              # robots glide back to where they stopped
+        if self.runtime and self.runtime.status()[0] in ("READY", "PAUSED"):
+            self.runtime.submit(self.runtime.start)  # carry on automatically
 
     def reset_stop(self):
         if self.system.state != "ESTOP":
