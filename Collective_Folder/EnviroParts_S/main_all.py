@@ -4,7 +4,7 @@ import threading
 import time
 from pathlib import Path
  
-ASSIGNMENT_ROOT = Path(__file__).resolve().parents[2]
+ASSIGNMENT_ROOT = Path(__file__).resolve().parents[1]
 for folder in (ASSIGNMENT_ROOT, ASSIGNMENT_ROOT / "Collective_Folder"):
     if str(folder) not in sys.path:
         sys.path.insert(0, str(folder))
@@ -21,7 +21,10 @@ from Hannah_Work.Feed_Iso import feed_iso
 from Collective_Folder.workcell_runtime import WorkcellRuntime, WorkcellClosed
 from Collective_Folder.safety_tests import SafetyDemonstration
 from Collective_Folder.maryam_collision_demo import MaryamCollisionDemo
- 
+# E-stop: importing this patches Swift once, so ALL robots obey it (no per-robot edits)
+from Collective_Folder import E_stop_test as estop
+from Collective_Folder.E_stop_test import ESTOP
+
 # Hannah's safety features
 from Collective_Folder.Prison_break import PrisonBreak
 from Light_curtain import SafetyLightCurtain
@@ -38,8 +41,77 @@ USE_LIGHT_CURTAIN = True
 USE_PRISON_BREAK = True
 IDLE_GAP = 0.03         # pause between background steps while the camera is open
 JOB_TIMEOUT = 0.5      # longest the kitchen waits for feed_iso / prisoners each step
+FIRST_STEP_TIMEOUT = 120.0   # a job's FIRST turn may load meshes (HannahBot) - allow it plenty of time
+HANNAH_WARMUP_STEPS = 3      # frames given to Hannah before Start so she is loaded into the scene
  
  
+
+# ============================================================
+# E-STOP <-> GUI ADAPTER
+#   Stop   = freeze every robot where it is (task paused, not cancelled)
+#   Home   = (while stopped) robots glide home, still holding trays/food
+#   Resume = robots glide back to where they were and the task carries on
+# Wire your GUI buttons to runtime.estop_stop / estop_home / estop_resume
+# (the E / H / R keys are also bound on the window as shortcuts).
+# ============================================================
+def wire_estop(runtime, window=None):
+    original_checkpoint = runtime.checkpoint
+    original_request_stop = runtime.request_stop
+
+    def checkpoint(*a, **k):
+        # While our E-stop is active the pause happens inside env.step (it must keep
+        # drawing frames to glide home), so don't also block here.
+        if ESTOP.stop_event.is_set() or ESTOP.state != "running":
+            return None
+        return original_checkpoint(*a, **k)
+
+    def estop_stop(message="Emergency stop"):
+        ESTOP.stop(message)
+        try:
+            runtime.log(f"E-STOP: {message}")
+        except Exception:
+            pass
+
+    def estop_home():
+        ESTOP.go_home()
+
+    def estop_resume():
+        ESTOP.resume()
+
+    runtime.checkpoint = checkpoint
+    runtime.request_stop = estop_stop          # wall hits / job failures / GUI stop all freeze the robots
+    runtime.estop_stop, runtime.estop_home, runtime.estop_resume = estop_stop, estop_home, estop_resume
+    ESTOP.set_stop_callback(lambda msg=None: None)   # avoid recursion with runtime.request_stop
+    runtime._original_request_stop = original_request_stop
+
+
+
+
+def attach_hannah_estop(robots, others):
+    """Newer Feed_Iso builds HannahBot inside her job. After her first step, find her parts and give her the
+    same E-stop treatment as before: the turtlebot stays put, only the arm folds up on H."""
+    import gc
+    hannah = turtle = None
+    for obj in gc.get_objects():
+        name = type(obj).__name__
+        if name == "HannahBot":
+            hannah = obj
+        elif name == "Turtlebot3Waffle":
+            turtle = obj
+    if hannah is None:
+        print("[ESTOP] HannahBot not found after her first step - she will only freeze", flush=True)
+        return
+    robots["HannahBot"] = hannah
+    ESTOP.register_robot("HannahBot", hannah)
+    ESTOP.rehome(hannah)                                    # home = where she is at the start of her run
+    root = None
+    if turtle is not None and hasattr(turtle, "q") and hasattr(turtle, "base"):
+        ESTOP.register_robot("HannahTurtle", turtle)
+        ESTOP.rehome(turtle)
+        root = turtle
+    ESTOP.group_near(hannah, root, exclude=[o for o in others if o is not None], stay=True)
+
+
 # ============================================================
 # LOCK-STEP: background jobs take one step each time the scene steps
 # ============================================================
@@ -51,10 +123,11 @@ class LockStep:
         self.turn = threading.RLock()     # only one thing touches the scene at a time
         self.kitchen_idle = False
         self.runtime = runtime
+        self.first_step_hooks = {}        # job name -> function run once after the job's first step
         env.step = self.step
  
     def add_job(self, name, fn):
-        job = {"name": name, "go": threading.Event(), "back": threading.Event(), "done": False}
+        job = {"name": name, "go": threading.Event(), "back": threading.Event(), "done": False, "first": True}
  
         def run():
             job["go"].wait(); job["go"].clear()       # wait for our first turn
@@ -86,8 +159,12 @@ class LockStep:
             for job in list(self.jobs.values()):
                 if not job["done"]:
                     job["go"].set()                         # let this job do ONE step
-                    if job["back"].wait(timeout=JOB_TIMEOUT):
+                    if job["back"].wait(timeout=FIRST_STEP_TIMEOUT if job.get("first") else JOB_TIMEOUT):
                         job["back"].clear()
+                        job["first"] = False
+                        hook = self.first_step_hooks.pop(job["name"], None)
+                        if hook:
+                            hook()
                     else:
                         if self.runtime:
                             self.runtime.request_stop(f"{job['name']} missed its step deadline")
@@ -100,6 +177,28 @@ class LockStep:
                         self.runtime.checkpoint()
             return result
  
+    def warm(self, steps):
+        """Give the background jobs a few turns BEFORE Start (no checkpoint), so a job that builds its robot
+        on its first turn (the new Feed_Iso) is fully loaded into the scene before the GUI says Ready."""
+        with self.turn:
+            for _ in range(steps):
+                self.real_step(DT)
+                for job in list(self.jobs.values()):
+                    if job["done"]:
+                        continue
+                    job["go"].set()
+                    timeout = FIRST_STEP_TIMEOUT if job.get("first") else JOB_TIMEOUT
+                    if not job["back"].wait(timeout=timeout):
+                        print(f"[{job['name']}] is slow to load - still waiting", flush=True)
+                        while not job["back"].wait(0.05):
+                            if self.runtime and self.runtime.closed:
+                                raise WorkcellClosed()
+                    job["back"].clear()
+                    job["first"] = False
+                    hook = self.first_step_hooks.pop(job["name"], None)
+                    if hook:
+                        hook()
+
     def jobs_running(self):
         return any(not j["done"] for j in self.jobs.values())
  
@@ -322,8 +421,12 @@ def run_orders(scanner, dispatcher, movements, sync, env, trays, objects):
             food_before = list(yara.FOOD_NAMES.get(colour.lower(), []))
             watch = [m for m in [tray, towel] if m is not None] + [objects[n] for n in food_before if n in objects]
  
-            with sync.turn, MealTrayTracker(env, watch) as tracker:
-                served = movements.serve(colour, lambda: dispatcher.mark_on_conveyor(order))
+            ESTOP.begin_task()                    # E-stop: start watching what each robot is holding
+            try:
+                with sync.turn, MealTrayTracker(env, watch) as tracker:   # kitchen holds the scene while it moves
+                    served = movements.serve(colour, lambda: dispatcher.mark_on_conveyor(order))
+            finally:
+                ESTOP.end_task()
             if served and tray is not None:
                 # The tray that was served, plus the food Yara used and the towel ReBot placed
                 used = [n for n in food_before if n not in yara.FOOD_NAMES.get(colour.lower(), [])]
@@ -347,7 +450,7 @@ def run_orders(scanner, dispatcher, movements, sync, env, trays, objects):
 # ============================================================
 # MAIN
 # ============================================================
-def run_workcell(runtime, bridge):
+def run_workcell(runtime, bridge, scanner=None):
     """Build once on the scene thread; Qt owns all desktop/camera widgets."""
     env = None
     try:
@@ -359,8 +462,9 @@ def run_workcell(runtime, bridge):
         from Collective_Folder import E_STOP
         # WallCollision imports the top-level alias on this entry path.
         import E_STOP as wall_estop
-        E_STOP.set_stop_callback(runtime.request_stop)
-        wall_estop.set_stop_callback(runtime.request_stop)
+        E_STOP.set_stop_callback(lambda m=None: runtime.request_stop(m))      # wall hits now freeze all robots
+        wall_estop.set_stop_callback(lambda m=None: runtime.request_stop(m))
+        ESTOP.install(env)                                  # hook Swift: every robot is covered
         walls = None
         if USE_WALLS:
             walls = WallCollision(env, objects)
@@ -368,7 +472,7 @@ def run_workcell(runtime, bridge):
             walls.test_ball_in_path()
             walls.arm()
         remove_prisoner(env, objects, "prisoner2")
- 
+
         # ---- Hannah's safety: light curtain (shown) + prison break zones ----
         if USE_LIGHT_CURTAIN:
             curtain = SafetyLightCurtain(env)
@@ -379,23 +483,43 @@ def run_workcell(runtime, bridge):
             prison.prisoners.pop("prisoner2", None)        # hidden, don't check it
             prison.arm()
         route_alarm_inputs(runtime)
- 
+
         movements = IntegratedMeal(env, objects, robot, trays, activity=runtime.log)
         runtime.collision = MaryamCollisionDemo(runtime, movements)
         robots = {"MaryamBot": robot, "YaraBot": yara.yarabot, "ReBot": movements.rebot}
         hannah_run = None
+        hannah = turtle = None
         if RUN_FEED_ISO:
             if "prepare_only" in inspect.signature(feed_iso).parameters:
                 hannah, turtle, hannah_run = feed_iso(
                     env, yellow_trays, walls=walls, prepare_only=True, activity=runtime.log)
                 robots["HannahBot"] = hannah
             else:
-                # Hannah's Feed_Iso: loads HannahBot and runs, as a job after Start
+                # Newer Feed_Iso builds HannahBot and drives the WHOLE delivery in one call, so it must run
+                # as a job after Start (calling it here would freeze loading until the delivery was over).
                 hannah_run = lambda: feed_iso(env, yellow_trays, walls=walls)
         # HANNAH: unsafe-zone/light-curtain monitoring is separate from WallCollision.
         runtime.safety = SafetyDemonstration(env, objects, runtime)
         runtime.safety.arm()
         env.step(DT)  # Flush all robot and scene geometry before reporting Ready.
+        for name, model in robots.items():                  # name them first, then pick up anything else
+            ESTOP.register_robot(name, model)
+        ESTOP.scan_robots()
+        if hannah_run and hannah is not None:               # Hannah's arm rides on her TurtleBot
+            try:
+                others = [robot, yara.yarabot, getattr(yara, "turtlebot", None), movements.rebot]
+                if hasattr(turtle, "q") and hasattr(turtle, "base"):
+                    ESTOP.register_robot("HannahTurtle", turtle)
+                    # turtlebot stays where it stopped; only the ARM (and parts riding on it) folds up on H
+                    ESTOP.group_near(hannah, turtle, exclude=[o for o in others if o is not None], stay=True)
+                else:
+                    ESTOP.flag_chassis(hannah)              # turtlebot is a plain mesh: carry it along
+            except Exception as exc:
+                print(f"[ESTOP] Hannah group failed: {exc}", flush=True)
+        try:                                                # Yara's arm rides on her TurtleBot
+            ESTOP.mount(yara.yarabot, yara.turtlebot)
+        except Exception:
+            pass
         runtime.robots = robots
         # TEAM: register collision predicates in workcell_actions.install_collision_checks.
         from Collective_Folder import workcell_actions
@@ -413,17 +537,34 @@ def run_workcell(runtime, bridge):
         }
         bridge.attach(env, robots, runtime, env.step, validators)
         sync = LockStep(env, runtime)
+        ESTOP.describe_robots()                              # prints each robot's own methods (for set_refresh)
+        wire_estop(runtime, getattr(bridge, 'window', None))
+        if hannah_run and hannah is None:
+            # New Feed_Iso builds HannahBot inside her job: load her NOW (a few frames) so the scene is complete
+            # and her E-stop setup is done before Ready. She does not really move until Start.
+            runtime.log("Loading HannahBot")
+            sync.add_job("FEED ISO", hannah_run)
+            others = [robot, yara.yarabot, getattr(yara, "turtlebot", None), movements.rebot]
+            def hannah_ready():
+                try:
+                    attach_hannah_estop(robots, others)
+                except Exception as exc:
+                    print(f"[ESTOP] Hannah setup failed: {exc}", flush=True)
+            sync.first_step_hooks["FEED ISO"] = hannah_ready
+            sync.warm(HANNAH_WARMUP_STEPS)
         with runtime.condition:
             if runtime.state != 'ESTOP':
                 runtime.set_state("READY", "Shared Swift scene and all robots loaded. Press Start.")
         runtime.checkpoint()  # No camera, prisoner or automatic motion before Start.
-        if hannah_run:
+        if hannah_run and hannah is not None:               # old Feed_Iso: Hannah's job starts after Start
             sync.add_job("FEED ISO", hannah_run)
+            # Hannah is only placed once her job starts, so her home = where she is after her first step
+            sync.first_step_hooks["FEED ISO"] = lambda: ESTOP.rehome(hannah, *( [turtle] if hasattr(turtle, "q") else [] ))
         if RUN_PRISONERS:
             # HANNAH: add/replace prisoner animation jobs here. They start after START.
             sync.add_job("PRISONERS", lambda: prisoners_job(env, objects))
         sync.start_idle_ticker()
-        run_orders(runtime, build_default_dispatcher(), movements, sync, env, trays, objects)
+        run_orders(scanner or runtime, build_default_dispatcher(), movements, sync, env, trays, objects)
         meals.put(None)                   # no more meals: don't leave anyone waiting forever
         sync.kitchen_idle = False
         while sync.jobs_running():
@@ -445,16 +586,17 @@ def run_workcell(runtime, bridge):
                 env.close()
             except Exception:
                 pass
- 
- 
+
+
+
 def main():
     from PySide6.QtWidgets import QApplication
     gui_folder = ASSIGNMENT_ROOT / "Collective_Folder/MealBot_GUI/MealBot_GUI/MealBot_GUI"
     sys.path.insert(0, str(gui_folder))
-    from main_gui import MainWindow
-    from theme import apply_theme
-    from camera_scanner import CameraScanner
- 
+    from main_gui import MainWindow  # type: ignore  (found at runtime via sys.path)
+    from theme import apply_theme  # type: ignore  (found at runtime via sys.path)
+    from camera_scanner import CameraScanner  # type: ignore  (found at runtime via sys.path)
+
     app = QApplication.instance() or QApplication(sys.argv)
     apply_theme(app)
     runtime = WorkcellRuntime()
@@ -469,8 +611,7 @@ def main():
     app.exec()
     runtime.close()
     worker.join(timeout=1.0)
- 
- 
+
+
 if __name__ == "__main__":
     main()
- 

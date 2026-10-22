@@ -37,7 +37,8 @@ except Exception:  # scipy missing: rotations just snap
 
 active = False  # True from stop() until the task has resumed
 
-CARRY_DIST = 0.6        # an item can only be held by a robot whose tool is within this distance (m)
+CARRY_DIST = 1.0        # an item can only be held by a robot whose tool is within this distance of the item's origin (m)
+                        # (a tray's origin is its corner, so this must be generous; the rigid-lock test does the real work)
 HOLD_FRAMES = 6         # an item must stay locked to a tool for this many moving frames to count as held
 HOLD_TRANS_TOL = 0.02   # ...within this much wobble (m)
 HOLD_ROT_TOL = 0.08     # ...and this much rotation wobble
@@ -176,6 +177,8 @@ class EStop:
         self._hist = {}
         self._chassis_robots = []   # robots whose (non-robot) chassis meshes must travel with them
         self._refresh_fns = {}
+        self._carry_check = None    # fn(robot name, q, 4x4 item pose) -> True if that is collision free
+        self._yaw_override = {}
         self._groups = []           # (arm, root, extra parts, stay) that must move as ONE rigid machine
         self._stay_arms = set()     # ids of arms that only fold up on H (their turtlebot stays put)
         self._fixed_ids = set()     # ids of robots that do not move at all on H / R (turtlebot, plates, ...)
@@ -357,6 +360,65 @@ class EStop:
                 extras.append(robot)
         self.group(arm, root, extras, stay)
         print(f"[ESTOP] group: {type(arm).__name__} on {type(root).__name__} + {len(extras)} extra part(s)", flush=True)
+
+    def set_carry_check(self, fn):
+        """fn(robot_name, q, pose4x4) -> True if a held item at that pose (robot at q) is collision free.
+        Used on H to pick which way to turn what a robot holds, so it does not go through a wall."""
+        self._carry_check = fn
+
+    def _choose_yaws(self, going_home, carried):
+        """For each robot holding something, test turning the held item +yaw / -yaw / 0 on the way home and keep
+        the first option the carry check says is clear along the whole way."""
+        self._yaw_override = {}
+        if self._carry_check is None or not carried:
+            return
+        for robot, q0, q1, _, _ in going_home:
+            mine = [c for c in carried if c[1] is robot]
+            name = next((n for n, v in self.home_positions.items() if v[0] is robot), None)
+            if not mine or name is None:
+                continue
+            base_yaw = table_get(HOME_CARRY_YAW_DEG, name, 0.0)
+            if base_yaw == 0.0:
+                continue
+            item, _, _, pose0, Tt0 = min(mine, key=lambda c: c[3][2, 3])      # the tray (lowest item)
+            c = np.mean([m[3][:3, 3] - m[4][:3, 3] for m in mine], axis=0)
+            pull = np.array([c[0], c[1], 0.0])
+            saved_q = np.asarray(robot.q, dtype=float).copy()
+            samples = []
+            try:
+                for h in (0.2, 0.4, 0.6, 0.8, 1.0):
+                    q = q0 + h * (q1 - q0)
+                    robot.q = q
+                    samples.append((h, q.copy(), tool_pose(robot)))
+            finally:
+                robot.q = saved_q
+            best = None
+            for yaw in (base_yaw, -base_yaw, 0.0):
+                good, tested = 0, 0
+                for h, q, Tt in samples:
+                    if Tt is None:
+                        continue
+                    ang = np.radians(yaw) * h
+                    cs, sn = np.cos(ang), np.sin(ang)
+                    Rz = np.array([[cs, -sn, 0.0], [sn, cs, 0.0], [0.0, 0.0, 1.0]])
+                    T = pose0.copy()
+                    T[:3, :3] = Rz @ pose0[:3, :3]
+                    T[:3, 3] = Tt[:3, 3] + Rz @ ((pose0[:3, 3] - Tt0[:3, 3]) - HOME_CARRY_PULL * h * pull)
+                    try:
+                        ok = bool(self._carry_check(name, q, T))
+                    except Exception:
+                        tested = 0
+                        break
+                    tested += 1
+                    good += ok
+                if tested and (best is None or good > best[0]):
+                    best = (good, yaw, tested)
+                if tested and good == tested:
+                    break
+            if best is not None:
+                self._yaw_override[id(robot)] = best[1]
+                print(f"[ESTOP] {name}: turning what it holds {best[1]:+.0f} deg on the way home "
+                      f"({best[0]}/{best[2]} checks clear)", flush=True)
 
     def rehome(self, *robots):
         """Make each robot's CURRENT pose its home (use when a robot is only placed once its job starts)."""
@@ -668,10 +730,10 @@ class EStop:
         self._stay_arms, self._fixed_ids = set(), set()
         for arm, root, extras, stay in self._groups:
             try:
-                Tr = np.asarray(root.base.A, dtype=float)
-                if id(arm) not in self._mounts:
+                Tr = np.asarray((root if root is not None else arm).base.A, dtype=float)   # root may be None (turtlebot is a plain mesh)
+                if root is not None and id(arm) not in self._mounts:
                     self._mounts[id(arm)] = (root, SE3(np.linalg.inv(Tr) @ np.asarray(arm.base.A, dtype=float)))
-                pool = [(root, 0, Tr)] + [(arm, i, F) for i, F in enumerate(frames_of(arm))]
+                pool = ([(root, 0, Tr)] if root is not None else []) + [(arm, i, F) for i, F in enumerate(frames_of(arm))]
                 order = sorted(extras, key=lambda p: np.linalg.norm(np.asarray(p.base.A, dtype=float)[:3, 3] - Tr[:3, 3]))
                 for part in order:
                     Bp = np.asarray(part.base.A, dtype=float)
@@ -684,7 +746,8 @@ class EStop:
                     pool += [(part, i, G) for i, G in enumerate(frames_of(part))]
                 if stay:
                     self._stay_arms.add(id(arm))
-                    self._fixed_ids.add(id(root))
+                    if root is not None:
+                        self._fixed_ids.add(id(root))
                     self._fixed_ids.update(id(p) for p in extras)
                 print(f"[ESTOP] {type(arm).__name__} machine: {len(extras)} extra part(s) locked on "
                       f"({len(self._part_mounts)} follow a link)", flush=True)
@@ -762,6 +825,7 @@ class EStop:
                     continue
                 print("Sending robots home...", flush=True)
                 self.state = "going home"
+                self._choose_yaws(going_home, carried)
                 self._glide(going_home, carried, chassis, to_home=True)
                 legacy_state = [home() for home, _ in self._handlers]
                 at_home = True
@@ -783,6 +847,7 @@ class EStop:
                 if resume is not None:
                     resume(state)
 
+        self._yaw_override = {}
         self.resume_event.clear()
         self.home_event.clear()
         self.stop_event.clear()
@@ -797,7 +862,7 @@ class EStop:
             groups.setdefault(id(robot), []).append(pose0[:3, 3] - Tt0[:3, 3])
         yaws = {}
         for name, (robot, _, _) in self.home_positions.items():
-            yaws[id(robot)] = table_get(HOME_CARRY_YAW_DEG, name, 0.0)
+            yaws[id(robot)] = self._yaw_override.get(id(robot), table_get(HOME_CARRY_YAW_DEG, name, 0.0))
         pulls = {}
         for rid, offsets in groups.items():
             c = np.mean(offsets, axis=0)

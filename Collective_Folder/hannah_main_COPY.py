@@ -13,7 +13,7 @@ from EnviroParts_S.Full_sim import create_environment as create_full_sim
 #saftey features
 from Collective_Folder.Prison_break import PrisonBreak
 from Light_curtain import SafetyLightCurtain
-from Prisoner_movement import walk_all_prisoners
+from BFED_S.Hannah_Work.Prisoner_movement import walk_all_prisoners
 
 #Hannah
 from Hannah_Work.wall_collision import WallCollision
