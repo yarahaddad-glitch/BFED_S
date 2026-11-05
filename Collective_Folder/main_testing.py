@@ -70,7 +70,7 @@ print("[SCENE] Verify both tabletops and the target tray height visually.")
 # 3. EXISTING KAWASAKI RMRC CONTROLLER
 # ============================================================
 robot_files = [
-    assignment_folder / "Maryam_Work" / f"RS007N-J{i}.STL"
+    assignment_folder / "Maryam_Work" / "Meshes_RS007N" / f"RS007N-J{i}.STL"
     for i in range(1, 7)
 ]
 controller = RobotController(

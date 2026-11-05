@@ -1,6 +1,9 @@
 Shared workcell setup, teammate tasks and collision-check integration:
 [Team tasks and run guide](documents/TEAM_TASKS_AND_RUN.md).
 
+Maryam's demonstration script, code map and remaining assessment evidence:
+[Maryam demo guide](documents/MARYAM_DEMO_GUIDE.md).
+
 project description:
   Our project proposes an automated robotic meal preparation and distribution system for a prison environment. 
   Colour-coded trays are used to represent different dietary requirements, such as vegetarian meals. 

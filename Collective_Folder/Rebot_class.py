@@ -1,3 +1,6 @@
+# Active custom ReBot mesh model used by IntegratedMeal; separate Rebot_DH.py is not this model.
+# FK accumulates fixed origin transforms and axis rotations, then applies the world base and gripper attachment.
+
 
 from pathlib import Path
 import numpy as np
@@ -8,6 +11,7 @@ from spatialmath import SE3
 
 class ReBot:
 
+    # Define six origin/axis joints and limits; load meshes and record home transforms for visual updates.
     def __init__(self, env, mesh_folder=None):
 
         self.name = "ReBot"
@@ -144,10 +148,12 @@ class ReBot:
     # 7. JOINT ANGLE PROPERTY
     # ======================================================
 
+    # Return a copy of the current joints so callers cannot silently mutate the stored array.
     @property
     def q(self):
         return self._q.copy()
 
+    # Validate finite joint angles/limits, store them, then refresh the robot meshes.
     @q.setter
     def q(self, new_q):
 
@@ -177,6 +183,7 @@ class ReBot:
     def gripper_opening(self):
         return self._gripper_opening
 
+    # Check the allowed simulated finger displacement and refresh the finger meshes.
     @gripper_opening.setter
     def gripper_opening(self, opening):
 
@@ -199,6 +206,7 @@ class ReBot:
     # 9. TRANSFORMATION FUNCTIONS
     # ======================================================
 
+    # Build the fixed origin translation and rotations in the explicit multiplication order below.
     @staticmethod
     def origin_transform(xyz, rpy):
 
@@ -212,6 +220,7 @@ class ReBot:
             * SE3.Rz(yaw)
         )
 
+    # Normalise the configured joint axis and construct its angle-axis rotation.
     @staticmethod
     def axis_rotation(axis, angle):
 
@@ -225,6 +234,7 @@ class ReBot:
     # 10. CALCULATE LINK TRANSFORMS
     # ======================================================
 
+    # Accumulate origin and joint-axis transforms to obtain six link poses relative to the base.
     def get_link_transforms(self, q=None):
 
         if q is None:
@@ -260,6 +270,7 @@ class ReBot:
     # 11. CALCULATE GRIPPER TRANSFORMS
     # ======================================================
 
+    # SHOW_GRIPPER - Finger-direction correction: right opens along local +Y, left along -Y.
     def get_gripper_transforms(
         self, link_transforms, opening=0.0
     ):
@@ -285,6 +296,7 @@ class ReBot:
     # 12. LOAD STL MESHES
     # ======================================================
 
+    # Load link/gripper STL shapes and keep their original assembled poses.
     def load_meshes(self):
 
         mesh_names = [
@@ -348,6 +360,7 @@ class ReBot:
     # 13. UPDATE ALL ROBOT MESHES
     # ======================================================
 
+    # Apply current-versus-home link motion and the world base to each original mesh pose.
     def update_meshes(self):
 
         # Current joint transforms
@@ -416,10 +429,12 @@ class ReBot:
     # 14. GRIPPER CONTROLS
     # ======================================================
 
+    # Set the simulated fingers to the configured maximum opening.
     def open_gripper(self):
 
         self.gripper_opening = self.GRIPPER_MAX
 
+    # Set the simulated fingers to the configured minimum opening.
     def close_gripper(self):
 
         self.gripper_opening = self.GRIPPER_MIN
@@ -428,6 +443,7 @@ class ReBot:
     # 15. RESET ROBOT
     # ======================================================
 
+    # Direct pose-setting helper; final GUI checked recovery is handled by WorkcellRecovery.
     def home(self):
 
         self.q = self.q_home

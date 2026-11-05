@@ -1,8 +1,5 @@
-"""GUI for main_all's shared workcell; standalone execution uses that entry point.
-
-Qt owns desktop widgets and the colour scanner. Scene commands are queued to
-the simulation thread. Physical safety and recovery belong to workcell_actions.
-"""
+# Qt interface for the existing shared workcell; buttons request runtime/bridge actions.
+# The Swift view camera is separate from the laptop webcam colour scanner.
 
 import sys
 from pathlib import Path
@@ -14,8 +11,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QMainWindow, QMessageBox, QPushButton, QScrollArea, QStackedWidget,
-    QVBoxLayout, QWidget, QPlainTextEdit,
+    QMainWindow, QMessageBox, QPushButton, QScrollArea, QStackedWidget, QComboBox,
+    QVBoxLayout, QWidget, QPlainTextEdit, QDialog, QDoubleSpinBox, QFormLayout,
 )
 
 from robot_bridge import RobotBridge
@@ -104,12 +101,8 @@ def _xyz(pose):
     return [float(pose[i]) for i in range(3)]
 
 
+# Calculate the Swift eye/look-at positions from the selected live robot.
 def _camera_pose_for_robot(robot, name, near_robot=None):
-    """Compute a viewpoint centred between the robot base and end effector.
-
-    Accepts standard Robotics Toolbox DH/ERobot models. Also accepts a Swift
-    handle with a .robot or .model reference and a .q joint-state vector.
-    """
     model = robot
     if not callable(getattr(model, "fkine", None)) and name != 'ReBot':
         model = getattr(robot, "robot", None) or getattr(robot, "model", None)
@@ -167,6 +160,137 @@ class SimplePage(QWidget):
         layout.addStretch()
 
 
+class CollisionScenarioDialog(QDialog):
+    """Controls only: all planning and scene changes stay on the scene thread."""
+    def __init__(self, host):
+        super().__init__(host)
+        self.host, self.runtime = host, host.runtime
+        self.scenario = self.runtime.scenario
+        self.busy = self.sync_cube = self.close_pending = False
+        self.dirty = False
+        self.setWindowTitle('Maryam: editable tray collision scenario')
+        self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        self.resize(435, 570)
+        layout = QVBoxLayout(self)
+        intro = QLabel('Automatic jobs are paused. Prepare a demonstration tray, edit the cube, '
+                       'check the whole task, then execute the verified route. Positions are WORLD metres.')
+        intro.setWordWrap(True); layout.addWidget(intro)
+        self.task = QComboBox()
+        self.task.addItems(['Deposit blue tray on conveyor', 'Hand out a demonstration meal'])
+        layout.addWidget(self.task)
+        self.prepare_btn = QPushButton('1. Prepare task + random cube')
+        self.prepare_btn.clicked.connect(lambda: self.submit(
+            lambda: self.scenario.prepare('deposit' if self.task.currentIndex()==0 else 'handout'), True))
+        layout.addWidget(self.prepare_btn)
+        form = QFormLayout()
+        self.xyz = []
+        for title, limits in zip(('Cube X (m)','Cube Y (m)','Cube Z (m)'), ((0,25),(0,25),(-1,4))):
+            spin = QDoubleSpinBox(); spin.setRange(*limits); spin.setDecimals(3); spin.setSingleStep(.025)
+            self.xyz.append(spin); form.addRow(title,spin)
+            spin.valueChanged.connect(self.edited)
+        self.side = QDoubleSpinBox(); self.side.setRange(.04,.20); self.side.setDecimals(3)
+        self.side.setSingleStep(.01); self.side.setValue(.10)
+        self.side.valueChanged.connect(self.edited)
+        form.addRow('Cube side (m)', self.side); layout.addLayout(form)
+        self.random_btn = QPushButton('New random position in task sweep')
+        self.random_btn.clicked.connect(lambda: self.submit(self.scenario.place_random_cube, True))
+        self.apply_btn = QPushButton('2. Apply edited cube position')
+        self.apply_btn.clicked.connect(self.apply_cube)
+        self.plan_btn = QPushButton('3. Detect collision + plan around cube')
+        self.plan_btn.clicked.connect(lambda: self.submit(self.scenario.plan))
+        self.execute_btn = QPushButton('4. Execute checked tray task')
+        self.execute_btn.clicked.connect(lambda: self.submit(self.scenario.execute))
+        for button in (self.random_btn,self.apply_btn,self.plan_btn,self.execute_btn):
+            layout.addWidget(button)
+        self.detection = QLabel('No route checked yet'); self.detection.setWordWrap(True)
+        self.detection.setStyleSheet('font-weight: bold; color: #a33116; padding: 4px;')
+        layout.addWidget(self.detection)
+        self.status = QLabel(self.scenario.status); self.status.setWordWrap(True); layout.addWidget(self.status)
+        row = QHBoxLayout()
+        stop = QPushButton('STOP'); stop.setStyleSheet('background: #c03939; color: white;')
+        stop.clicked.connect(host.stop_all)
+        reset = QPushButton('Reset stop only'); reset.clicked.connect(host.reset_stop)
+        row.addWidget(stop); row.addWidget(reset); layout.addLayout(row)
+        self.finish_btn = QPushButton('5. Finish / restore paused automatic task')
+        self.finish_btn.clicked.connect(lambda: self.submit(self.scenario.finish))
+        layout.addWidget(self.finish_btn)
+        self.timer = QTimer(self); self.timer.timeout.connect(self.refresh); self.timer.start(100)
+        self.refresh()
+
+    def apply_cube(self):
+        centre, side = [spin.value() for spin in self.xyz], self.side.value()
+        self.submit(lambda: self.scenario.set_cube(centre,side))
+
+    # Mark edited cube coordinates so an old plan cannot be mistaken for the edited scene.
+    def edited(self, *_):
+        self.dirty = True
+        self.refresh()
+
+    # Queue scenario work for the scene thread instead of editing geometry in the Qt callback.
+    def submit(self, action, sync_cube=False):
+        if self.busy:
+            return
+        self.busy = True
+        def work():
+            try:
+                action()
+                self.sync_cube = sync_cube
+                self.dirty = False
+            except Exception as exc:
+                self.scenario.status = str(exc)
+                raise
+            finally:
+                self.busy = False
+        self.runtime.submit(work)
+        self.refresh()
+
+    def refresh(self):
+        s = self.scenario
+        self.status.setText(s.status)
+        self.detection.setText(s.detection)
+        if self.sync_cube:
+            for spin, value in zip(self.xyz,s.centre):
+                spin.blockSignals(True)
+                spin.setValue(float(value))
+                spin.blockSignals(False)
+            self.side.blockSignals(True)
+            self.side.setValue(s.side)
+            self.side.blockSignals(False)
+            self.sync_cube = False
+        allowed = self.runtime.state in ('READY','PAUSED','COMPLETE') and not self.busy
+        edit = allowed and s.active and not s.has_moved
+        self.task.setEnabled(allowed and not s.active)
+        self.prepare_btn.setEnabled(allowed and not s.active)
+        for widget in self.xyz+[self.side,self.random_btn,self.apply_btn,self.plan_btn]:
+            widget.setEnabled(edit)
+        self.plan_btn.setEnabled(edit and not self.dirty)
+        self.execute_btn.setEnabled(allowed and not self.dirty and s.route is not None and not s.finished and not s.interrupted)
+        if self.dirty:
+            self.status.setText('Cube edits are not applied yet. Press Apply edited cube position.')
+        self.finish_btn.setEnabled(allowed and s.active)
+        if self.close_pending and not self.busy and not s.active:
+            self.close()
+
+    def closeEvent(self, event):
+        if self.runtime.closed:
+            self.timer.stop()
+            event.accept()
+            return
+        if self.scenario.active:
+            event.ignore()
+            if self.busy or self.runtime.state == 'ESTOP':
+                self.scenario.status = 'Reset any stop, then Finish / Restore before closing this scenario.'
+            else:
+                self.close_pending = True
+                self.submit(self.scenario.finish)
+            return
+        self.timer.stop()
+        event.accept()
+
+    def reject(self):
+        self.close()
+
+
 def compact_scroll(page):
     """Keep the existing ManualMode accessible in the small GUI footprint."""
     wrapper = QScrollArea()
@@ -201,6 +325,7 @@ def status_row(name, value, tooltip=""):
 class MainWindow(QMainWindow):
     """Small top-left overlay for a single shared Swift scene."""
 
+    # SHOW_GUI - Build pages, bridge, state manager, navigation, STOP button, shortcuts and refresh timers.
     def __init__(self, env=None, robots=None, runtime=None):
         super().__init__()
         self.setWindowTitle("Smart MealBot | Compact Controls")
@@ -214,7 +339,12 @@ class MainWindow(QMainWindow):
         self.system.runtime = runtime
         self.last_activity = 0
         self.last_safety_alert = 0
+        self.session_generation = runtime.session_generation if runtime else 0
         self.safety_warning = None
+        self.state_badge = QLabel('STATE = LOADING', self,
+            Qt.Tool | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
+        self.state_badge.setAlignment(Qt.AlignCenter)
+        self.state_badge.setMinimumSize(205, 42)
 
         # Camera binding is explicit: there is no fake video/camera feed.
         self.swift_env = None
@@ -250,6 +380,14 @@ class MainWindow(QMainWindow):
         content = QVBoxLayout(surface)
         content.setContentsMargins(5, 5, 5, 5)
         content.setSpacing(0)
+        self.header_state = QLabel('STATE = LOADING')
+        self.header_state.setAlignment(Qt.AlignRight)
+        self.header_state.setStyleSheet('font-size: 12px; font-weight: bold; padding: 4px;')
+        content.addWidget(self.header_state)
+        self.state_reason = QLabel('Loading the shared workcell...')
+        self.state_reason.setWordWrap(True)
+        self.state_reason.setStyleSheet('font-size: 10px; padding: 2px 4px; color: #55366f;')
+        content.addWidget(self.state_reason)
         self.pages = QStackedWidget()
         self.pages.setMinimumSize(0, 0)
         content.addWidget(self.pages)
@@ -270,6 +408,8 @@ class MainWindow(QMainWindow):
                             ('Camera', 6), ('Collision tests', 3), ('Safety tests', 7),
                             ('PLC', 5), ('Emergency stop', 4)):
             button = QPushButton(name)
+            if index == 2:
+                button.setToolTip('Opening Manual pauses automation. Use Camera to watch a moving robot.')
             button.setObjectName("navButton")
             button.setStyleSheet('font-size: 10px; padding: 1px 3px;')
             button.setFixedHeight(19)
@@ -293,7 +433,7 @@ class MainWindow(QMainWindow):
         left.addWidget(emergency_stop)
 
         from PySide6.QtGui import QShortcut, QKeySequence
-        for key, action in (("E", self.stop_all), ("H", self.home_all), ("R", self.resume_task)):
+        for key, action in (("E", self.stop_all), ("H", self.home_all), ("R", self.reset_stop)):
             QShortcut(QKeySequence(key), self, activated=action)
 
         self.system.changed.connect(self.on_state)
@@ -318,7 +458,11 @@ class MainWindow(QMainWindow):
         if screen is not None:
             area = screen.availableGeometry()
             self.move(area.left() + 8, area.top() + 8)
+            self.state_badge.adjustSize()
+            self.state_badge.move(area.right() - self.state_badge.width() - 12, area.top() + 12)
+        self.state_badge.show()
 
+    # Create workcell state/activity widgets displayed by the runtime polling loop.
     def make_dashboard(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -339,7 +483,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(row)
         row, self.dashboard_loaded = status_row("Swift scene", "LOADING")
         layout.addWidget(row)
-        row, _ = status_row("Collision / PLC", "PENDING", "Awaiting the safety and PLC modules")
+        row, _ = status_row("PLC evidence", "RECORDED", "Use the team's separate physical e-stop demonstration video")
         layout.addWidget(row)
         row, self.dashboard_safety = status_row('Zone / curtain', 'LOADING')
         layout.addWidget(row)
@@ -370,6 +514,7 @@ class MainWindow(QMainWindow):
         button.setToolTip("Not connected. Waiting for team integration.")
         return button
 
+    # Create Start/Pause/Rebuild controls connected to runtime request handlers.
     def make_automatic_page(self):
         page = SimplePage(
             "Automatic Mode",
@@ -379,13 +524,14 @@ class MainWindow(QMainWindow):
         controls = QVBoxLayout()
         for label, callback in (("Start / Resume", self.start_sequence),
                                 ("Pause for manual control", self.pause_sequence),
-                                ("Restart (team hook)", self.restart_sequence)):
+                                ("Rebuild simulation (wait for Ready)", self.restart_sequence)):
             button=QPushButton(label)
             button.clicked.connect(callback)
             controls.addWidget(button)
         page.layout().insertLayout(2, controls)
         return page
 
+    # Create controls for the separate paused Maryam cube-obstacle demonstration.
     def make_collision_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -395,45 +541,75 @@ class MainWindow(QMainWindow):
         self.collision_status = QLabel('Loading')
         self.collision_status.setWordWrap(True)
         layout.addWidget(self.collision_status)
-        for label, callback in (('Insert obstacle on next tray move', self.arm_collision_test),
-                                ('1. Remove obstacle', self.remove_collision_obstacle),
-                                ('2. Reset', self.reset_stop),
-                                ('3. Start / Resume', self.start_sequence)):
-            button = QPushButton(label)
-            button.clicked.connect(callback)
-            layout.addWidget(button)
+        self.collision_response = QComboBox()
+        self.collision_response.addItems(['Avoid obstacle (checked detour)', 'Stop before obstacle'])
+        description = QLabel('Open a paused Manual scenario on Maryam\'s actual arm. '
+            'Choose conveyor deposit or meal handout, move a cube using world XYZ, '
+            'detect the blocked route, and execute a checked detour if one exists.')
+        description.setWordWrap(True); layout.addWidget(description)
+        button = QPushButton('Open Maryam tray + cube scenario')
+        button.clicked.connect(self.open_collision_scenario)
+        layout.addWidget(button)
         layout.addStretch()
         return page
 
+    # Pause automation, select Maryam and open the task/cube planning dialog.
+    def open_collision_scenario(self):
+        if not self.runtime or self.runtime.scenario is None:
+            return
+        if self.runtime.state not in ('READY','PAUSED','RUNNING','COMPLETE'):
+            self.runtime.message = 'Clear the hazard and reset the stop before entering the scenario'
+            return
+        self.runtime.request_pause('Maryam collision scenario opened; automatic jobs are parked.')
+        self.manual_page.selector.setCurrentText('MaryamBot')
+        self.navigate(2)
+        self.select_camera_robot('Maryam')
+        if not getattr(self,'scenario_dialog',None) or not self.scenario_dialog.isVisible():
+            self.scenario_dialog = CollisionScenarioDialog(self)
+        self.scenario_dialog.show()
+        self.scenario_dialog.raise_()
+
     def arm_collision_test(self):
         if self.runtime and self.runtime.collision:
-            self.runtime.request_pause()
-            self.runtime.submit(self.runtime.collision.arm_test)
+            self.runtime.request_pause('Collision test insertion requested. Press Start / Resume after arming.')
+            avoid = self.collision_response.currentIndex() == 0
+            self.runtime.submit(lambda: self.runtime.collision.arm_test(avoid=avoid))
             self.select_camera_robot('Maryam')
 
     def remove_collision_obstacle(self):
         if self.runtime and self.runtime.collision:
-            self.runtime.request_pause()
+            self.runtime.request_pause('Obstacle removal requested. Press Start / Resume when ready.')
             self.runtime.submit(self.runtime.collision.remove_obstacle)
 
+    # Present separate Reset, optional Home and Start/Resume actions.
     def make_recovery_page(self):
         page = SimplePage(
             "Emergency / Recovery",
-            "STOP freezes every robot. Home sends them to their home pose (still holding items). "
-            "Reset resumes the task from where it stopped. "
-            "Yara's hardware and recovery hooks: Collective_Folder/workcell_actions.py.",
+            "STOP latches the simulation. Clear the hazard, then Reset; robots stay still. "
+            "Home is optional recovery movement after Reset. Home all returns Maryam, Yara, "
+            "Hannah and ReBot arms to their saved Home joints at their current base positions. "
+            "Restart / Resume restores the interrupted task poses first.",
         )
-        home = QPushButton("Home (robots go to home pose)")
+        home = QPushButton("2. Home all four arms (optional)")
         home.clicked.connect(lambda checked=False: self.home_all())
         page.layout().insertWidget(2, home)
-        reset = QPushButton("Reset (resume the task)")
-        reset.clicked.connect(lambda checked=False: self.resume_task())
+        reset = QPushButton("1. Reset stop (no movement)")
+        reset.clicked.connect(lambda checked=False: self.reset_stop())
         page.layout().insertWidget(3, reset)
+        start = QPushButton('3. Restart / Resume task')
+        start.clicked.connect(self.start_sequence)
+        page.layout().insertWidget(4, start)
         clear = QPushButton('Clear safety test actor')
         clear.clicked.connect(self.clear_safety_actor)
         page.layout().insertWidget(4, clear)
+        # Make the order match the deliberate actions: clear -> reset -> home -> restart.
+        page.layout().removeWidget(clear); page.layout().insertWidget(2,clear)
+        page.layout().removeWidget(reset); page.layout().insertWidget(3,reset)
+        page.layout().removeWidget(home); page.layout().insertWidget(4,home)
+        page.layout().removeWidget(start); page.layout().insertWidget(5,start)
         return page
 
+    # Create deliberate intrusion/light-curtain simulation test controls.
     def make_safety_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -462,14 +638,15 @@ class MainWindow(QMainWindow):
 
     def run_safety_test(self, kind):
         if self.runtime and self.runtime.safety:
-            self.runtime.request_pause()
+            self.runtime.request_pause(f'Safety test requested: {kind}.')
             self.runtime.submit(lambda:self.runtime.safety.run(kind))
 
     def clear_safety_actor(self):
         if self.runtime and self.runtime.safety:
-            self.runtime.request_pause()
+            self.runtime.request_pause('Safety test actor removal requested.')
             self.runtime.submit(self.runtime.safety.clear_actor)
 
+    # Display the disabled PLC interface; this GUI page does not perform PLC reads or writes.
     def make_plc_page(self):
         page = SimplePage(
             "PLC Monitor — OFFLINE",
@@ -520,6 +697,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(stop_follow)
         return page
 
+    # Bind camera controls to the already-running environment and live robot references.
     def attach_swift_scene(self, env, robots):
         """Bind a REAL, existing Swift environment; never launch another one.
 
@@ -540,6 +718,7 @@ class MainWindow(QMainWindow):
         self.dashboard_camera.setText("LINKED")
         # If a robot was selected before connection, select it again in the UI.
 
+    # SHOW_VIEW_CAMERA - Select which robot the rendered Swift camera follows; does not command joints.
     def select_camera_robot(self, name):
         """Focus on the chosen robot; keep tracking while its joints move."""
         if name not in CAMERA_OFFSETS:
@@ -576,6 +755,7 @@ class MainWindow(QMainWindow):
             )
             self.dashboard_camera.setText(name.upper())
 
+    # Queue a viewpoint update on the scene runtime; no image feedback enters robot control.
     def update_camera(self):
         """Change only the Swift VIEW camera, not any robot joint or pose."""
         if not self.camera_following or self.swift_env is None:
@@ -606,6 +786,7 @@ class MainWindow(QMainWindow):
                 "LINKED" if self.swift_env is not None else "NOT LINKED"
             )
 
+    # Switch pages; opening Manual deliberately pauses automatic work.
     def navigate(self, index):
         self.pages.setCurrentIndex(index)
         if index == 2:
@@ -616,59 +797,86 @@ class MainWindow(QMainWindow):
             button.style().polish(button)
             button.update()
 
+    # Reflect runtime state through badges/colours and navigate on a simulated stop.
     def on_state(self, state):
         state = str(state)
         self.state.setText("● " + state)
         self.dashboard_state.setText(state)
+        text = f'STATE = {state}'
+        self.header_state.setText(text)
+        self.state_badge.setText(text)
+        colour = {'ESTOP':'#b42318', 'FAULT':'#b42318', 'RUNNING':'#167044',
+                  'PAUSED':'#805b00', 'READY':'#55328a', 'LOADING':'#475467',
+                  'COMPLETE':'#175cd3', 'RECOVERING':'#175cd3', 'DEMONSTRATION':'#175cd3'}.get(state, '#475467')
+        self.state_badge.setStyleSheet(
+            f'background: {colour}; color: white; border-radius: 7px; '
+            'font-size: 15px; font-weight: bold; padding: 7px;')
+        self.state_badge.adjustSize()
+        screen = QApplication.primaryScreen()
+        if screen:
+            area = screen.availableGeometry()
+            self.state_badge.move(area.right()-self.state_badge.width()-12,area.top()+12)
         if state == "ESTOP" and self.pages.currentIndex() not in (3, 7):
             self.navigate(4)
 
+    # SHOW_STOP - Request the shared simulation stop through SystemManager.
     def stop_all(self):
         """STOP: freeze every robot in place (task paused, not cancelled)."""
-        if self.runtime and hasattr(self.runtime, "estop_stop"):
-            self.runtime.estop_stop("GUI stop")
         self.system.e_stop("GUI simulation stop")
 
+    # Queue optional checked all-arm recovery after the stop has been acknowledged.
     def home_all(self):
-        """HOME: (after STOP) robots glide to their home pose, still carrying anything they hold."""
+        """Queue checked all-arm Home after reset; never release the stop here."""
         if self.runtime and hasattr(self.runtime, "estop_home"):
             self.runtime.estop_home()
 
     def resume_task(self):
-        """RESET: release the stop and carry on with the task that was running."""
-        if self.system.state == "ESTOP":
-            self.system.reset()                      # clear the GUI/runtime stop latch
-        if self.runtime and hasattr(self.runtime, "estop_resume"):
-            self.runtime.estop_resume()              # robots glide back to where they stopped
-        if self.runtime and self.runtime.status()[0] in ("READY", "PAUSED"):
-            self.runtime.submit(self.runtime.start)  # carry on automatically
+        """Compatibility entry point: acknowledging a stop never starts motion."""
+        self.reset_stop()
 
+    # Request acknowledgement of the stop; this action does not start motion.
     def reset_stop(self):
-        if self.system.state != "ESTOP":
+        if self.runtime and self.runtime.state != 'ESTOP':
             return
         self.system.reset()
 
+    # SHOW_START - Queue runtime.start() when READY or PAUSED; runtime performs restoration and hazard checks.
     def start_sequence(self):
         if self.runtime and self.runtime.state in ('READY','PAUSED'):
             self.runtime.submit(self.runtime.start)
 
+    # Request automation pause without discarding the interrupted task.
     def pause_sequence(self):
         if self.runtime:
-            self.runtime.request_pause()
+            self.runtime.request_pause('Pause button pressed. Use Start / Resume to continue.')
 
+    # Queue a fresh simulation rebuild; distinct from acknowledging an emergency stop.
     def restart_sequence(self):
         if self.runtime:
             self.runtime.submit(self.runtime.restart)
 
+    # SHOW_STATUS_SYNC - Refresh status/activity/safety widgets and attach to each new simulation session.
     def poll_runtime(self):
         if not self.runtime:
             return
         state, message = self.runtime.status()
+        self.state_reason.setText(message)
+        self.state_badge.setToolTip(message)
+        self.header_state.setToolTip(message)
+        if self.session_generation != self.runtime.session_generation:
+            self.session_generation = self.runtime.session_generation
+            self.stop_camera_follow(show_message=False)
+            self.swift_env, self.swift_robots = None, {}
+            self.camera_selected = None
+            self.last_safety_alert = 0
+            self.manual_page.pending_jogs.clear()
+            self.manual_page.name = None
         for number, activity in self.runtime.activity_since(self.last_activity):
             self.activity_terminal.appendPlainText(activity)
             self.last_activity = number
         if self.runtime.collision:
-            self.collision_status.setText(self.runtime.collision.status)
+            self.collision_status.setText(self.runtime.scenario.status if self.runtime.scenario
+                and self.runtime.scenario.active else 'Paused, editable cube-obstacle tray scenario')
         if self.runtime.safety:
             safety = self.runtime.safety
             hazards = safety.active_hazards()
@@ -695,6 +903,7 @@ class MainWindow(QMainWindow):
             self.system.changed.emit(state)
 
     def closeEvent(self, event):
+        self.state_badge.close()
         if self.safety_warning:
             self.safety_warning.close()
         if self.runtime:

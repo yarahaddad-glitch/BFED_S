@@ -207,6 +207,9 @@ class EStop:
         self._original_step = original_step
 
         def step(sim, *args, **kwargs):
+            if getattr(estop, 'runtime', None) is not None:
+                estop._guard()
+                return original_step(sim, *args, **kwargs)
             estop._snapshot_pending()
             estop._guard()              # blocks here while stopped
             try:
@@ -217,6 +220,8 @@ class EStop:
 
         def add(sim, ob, *args, **kwargs):
             result = original_add(sim, ob, *args, **kwargs)
+            if getattr(estop, 'runtime', None) is not None:
+                return result
             if looks_like_robot(ob):
                 estop._pending.append(ob)   # snapshot its start pose on the next step
             elif looks_like_item(ob) and id(ob) not in estop._item_ids:
@@ -642,6 +647,9 @@ class EStop:
     # ---------------- the three commands (thread-safe) ----------------
     def stop(self, message="Emergency stop"):
         """E: raise the flag. The simulation thread freezes every robot on its next frame."""
+        if getattr(self, 'runtime', None) is not None:
+            self.runtime.request_stop(message)
+            return
         global active
         if self.stop_event.is_set():
             return
@@ -663,6 +671,9 @@ class EStop:
 
     def go_home(self):
         """H: (only while stopped) glide every robot to its home pose."""
+        if getattr(self, 'runtime', None) is not None:
+            self.runtime.submit(lambda: self.runtime.home('All'))
+            return
         if not self.stop_event.is_set():
             print("Press E first.", flush=True)
             return
@@ -671,6 +682,9 @@ class EStop:
 
     def resume(self):
         """R: (only while stopped) carry on with the task where it was."""
+        if getattr(self, 'runtime', None) is not None:
+            self.runtime.submit(self.runtime.start)
+            return
         if not self.stop_event.is_set():
             print("Nothing to resume - the E-stop is not active.", flush=True)
             return
@@ -680,6 +694,13 @@ class EStop:
     # ---------------- what happens on the simulation thread ----------------
     def _guard(self):
         """Called on every frame. While stopped, this thread waits here (the task is paused)."""
+        runtime = getattr(self, 'runtime', None)
+        if runtime is not None:
+            # The integrated GUI owns the only stop latch. Queued recovery draws
+            # and scene construction must not recursively enter checkpoint().
+            if runtime.state != 'LOADING' and not runtime.command_depth:
+                runtime.checkpoint()
+            return
         if self._holding:
             return
 
@@ -986,9 +1007,11 @@ def set_home(robot, q=None, base=None):
 
 
 def is_active():
-    return ESTOP.stop_event.is_set()
+    runtime = getattr(ESTOP, 'runtime', None)
+    return runtime.state == 'ESTOP' if runtime is not None else ESTOP.stop_event.is_set()
 
 
 def status():
     """For the GUI: 'running', 'stopped', 'going home', 'home' or 'resuming'."""
-    return ESTOP.state
+    runtime = getattr(ESTOP, 'runtime', None)
+    return runtime.state if runtime is not None else ESTOP.state

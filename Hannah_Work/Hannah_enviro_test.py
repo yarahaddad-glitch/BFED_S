@@ -44,7 +44,7 @@ for filename in ["isolation_area2.dae", "dining_area2.dae",
     env.add(part)
 
 robot_files = [
-    project_folder / "Maryam_Work" / f"RS007N-J{i}.STL"
+    project_folder / "Maryam_Work" / "Meshes_RS007N" / f"RS007N-J{i}.STL"
     for i in range(1, 7)
 ]
 controller = RobotController(

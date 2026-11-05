@@ -1,5 +1,9 @@
 """YARA: team-owned emergency-stop and recovery integration points.
 
+The integrated simulator now uses WorkcellRecovery in maryam_recovery.py for
+registered arm Home/return motion; WorkcellRuntime owns reset/resume and rebuild.
+The fallback hooks here remain available for additional team/hardware adapters.
+
 The GUI calls these on the simulation thread with a WorkcellRuntime context:
 context.env, context.robots, context.objects and context.request_stop(reason).
 The built-in simulation latch stops further steps independently of these hooks.

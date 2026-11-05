@@ -252,6 +252,7 @@ def execute_path(path, food=None, offset=None):
     """Play a joint path frame by frame. E-stop is checked before every frame."""
     if path is None:
         return False
+    yarabot.recovery_payloads = [(food, offset)] if food is not None and offset is not None else []
     for q in np.asarray(path, dtype=float):
         ESTOP.check()
         yarabot.q = q.copy()
@@ -618,6 +619,7 @@ def transport_food(food, offset, place_target=None):
     food.T = (yarabot.fkine(yarabot.q) * offset).A.copy()
     held_food = held_offset = None
     carried_food = carried_start = None  # food is on the tray now, don't move it on reset
+    yarabot.recovery_payloads = []
     env.step(DT)
 
     # 7. Retreat along the verified path, then go home

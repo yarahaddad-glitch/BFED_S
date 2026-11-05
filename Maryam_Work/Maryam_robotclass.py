@@ -7,29 +7,10 @@ from ir_support.robots.UTSMeshRobot import UTSMeshRobot
 
 
 class MaryamBot(UTSMeshRobot):
-    """
-    Kawasaki RS007N 6-DOF industrial robot.
-
-    Uses:
-    - Standard DH parameters
-    - Custom STL graphical meshes
-    - UTSMeshRobot for Swift visualisation
-    - Manufacturer joint limits
-    """
 
     def __init__(self, base=None):
-
-        # =====================================================
-        # 1. MESH DIRECTORY
-        # =====================================================
-
-        # STL files are stored in the same folder as this file.
-        mesh_dir = os.path.dirname(os.path.abspath(__file__))
-
-        # =====================================================
-        # 2. LINK MESH NAMES + COLOURS
-        # =====================================================
-
+        # Robot meshes live in the dedicated folder beside this module.
+        mesh_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Meshes_RS007N")
         link3d_names = {
             "link0": "RS007N-BASE",
             "link1": "RS007N-J1",
@@ -49,9 +30,7 @@ class MaryamBot(UTSMeshRobot):
             "color6": (0.55, 0.20, 0.80, 1.0),
         }
 
-        # =====================================================
-        # 3. KAWASAKI RS007N STANDARD DH PARAMETERS
-        # =====================================================
+       # dh parametrs
 
         # Convert degrees into radians.
         # Robotics Toolbox uses radians for revolute joints.
@@ -65,7 +44,6 @@ class MaryamBot(UTSMeshRobot):
                 a=0.0,
                 alpha=pi / 2,
                 offset=-pi / 2,
-                flip=True,
                 qlim=[-180 * deg, 180 * deg]
             ),
 
@@ -84,7 +62,6 @@ class MaryamBot(UTSMeshRobot):
                 a=0.0,
                 alpha=pi / 2,
                 offset=pi / 2,
-                flip=True,
                 qlim=[-155 * deg, 155 * deg]
             ),
 
@@ -103,7 +80,6 @@ class MaryamBot(UTSMeshRobot):
                 a=0.0,
                 alpha=-pi / 2,
                 offset=0.0,
-                flip=True,
                 qlim=[-125 * deg, 125 * deg]
             ),
 
@@ -117,9 +93,8 @@ class MaryamBot(UTSMeshRobot):
             ),
         ]
 
-        # =====================================================
-        # 4. CREATE THE UTS MESH ROBOT
-        # =====================================================
+
+        # 4. INITIALISE THE ROBOT
 
         super().__init__(
             links=links,
@@ -136,30 +111,16 @@ class MaryamBot(UTSMeshRobot):
             base=base,
         )
 
-        # =====================================================
-        # 5. CONSERVATIVE SOFTWARE JOINT LIMITS
-        # =====================================================
-
-        # Smaller than the mechanical joint limits.
-        # These are INITIAL simulation limits only.
-        # They must be tested against the actual STL geometry.
-        # Shape: 2 rows x 6 joints.
+       #  joint limits for safety check
         self.safe_qlim = np.deg2rad([
             [-170, -120, -140, -180, -110, -330],
             [ 170,  120,  140,  180,  110,  330]
         ])
 
-    # =========================================================
-    # 6. CHECK WHETHER JOINT ANGLES ARE WITHIN SAFE LIMITS
-    # =========================================================
 
     def joints_safe(self, q):
-        """
-        Returns True if all six joint angles are within the
-        conservative software limits.
 
-        This does NOT guarantee the robot is collision-free.
-        """
+        # Returns True if all six joint angles are within the conservative software limits.
         q = np.asarray(q, dtype=float)
 
         if q.shape != (6,):

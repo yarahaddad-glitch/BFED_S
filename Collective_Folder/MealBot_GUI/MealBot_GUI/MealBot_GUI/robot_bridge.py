@@ -1,4 +1,6 @@
-﻿"""Manual controls for the robot objects in the running shared workcell."""
+﻿# Adapter from GUI requests to the same live robot objects used by automation.
+# Manual Cartesian jogging solves an endpoint pose then executes checked joint interpolation; it is not Maryam's automatic RMRC segment.
+
 import numpy as np
 from spatialmath import SE3
 from Collective_Folder import workcell_actions
@@ -12,24 +14,38 @@ class RobotBridge:
         self.draw = None
         self.validators = {}
         self.saved = {}
+        self.motion_updates = {}
 
+    def reset(self):
+        self.env = self.runtime = self.draw = None
+        self.robots, self.validators, self.saved, self.motion_updates = {}, {}, {}, {}
+
+    # SHOW_CONNECTION - Store live environment/models, validators and drawing callback; expose this bridge to runtime.
     def attach(self, env, robots, runtime, draw, validators=None):
         self.env, self.robots, self.runtime, self.draw = env, robots, runtime, draw
         self.validators = validators or {}
         runtime.bridge = self
 
+    # Return the existing named robot; never construct a duplicate arm for manual control.
     def load(self, name):
         if name not in self.robots:
             raise ValueError("Wait until the shared workcell is fully loaded")
         return self.robots[name]
 
+    # Require a permitted state and save the original joint/base pose for later continuation.
     def begin_manual(self, name):
         robot = self.load(name)
+        if self.runtime.recovery and name in getattr(self.runtime.recovery, 'saved', {}):
+            raise ValueError('Start / Resume restores the task pose before further manual control')
+        if (name == 'MaryamBot' and self.runtime.recovery
+                and self.runtime.recovery.return_q is not None):
+            raise ValueError('Start / Resume restores the task pose before further manual control')
         if self.runtime.state not in ('READY', 'PAUSED', 'COMPLETE'):
             raise ValueError('Pause automatic motion before jogging')
         if name not in self.saved:
             self.saved[name] = (np.asarray(robot.q, float).copy(), SE3(robot.base))
 
+    # Convert model/software limits to GUI degrees; use provisional limits only when model limits are invalid.
     def limits_deg(self, name):
         robot = self.load(name)
         limits = np.asarray(robot.qlim, float)
@@ -46,6 +62,7 @@ class RobotBridge:
     def angles_deg(self, name):
         return np.rad2deg(np.asarray(self.load(name).q, float))
 
+    # Use each robot's actual FK convention to obtain a world tool pose, including custom ReBot transforms.
     def tool_pose(self, name, q=None):
         robot = self.load(name)
         q = robot.q if q is None else q
@@ -56,6 +73,7 @@ class RobotBridge:
             return robot.measured_fkine(q)
         return robot.fkine(q)
 
+    # SHOW_COLLISION - Check numerical values, limits, configured robot validator and registered team predicates.
     def _valid(self, name, q):
         robot = self.load(name)
         limits, _ = self.limits_deg(name)
@@ -72,6 +90,7 @@ class RobotBridge:
         if not self.runtime.configuration_clear(name, q):
             raise ValueError('Registered team collision check rejected the motion')
 
+    # Precheck the sampled joint route, then recheck/assign each sample and update meshes/payloads.
     def move_to(self, name, target):
         self.begin_manual(name)
         robot = self.load(name)
@@ -89,9 +108,13 @@ class RobotBridge:
             robot.q = q.copy()
             if hasattr(robot, 'update_meshes'):
                 robot.update_meshes()
+            update = self.motion_updates.get(name)
+            if update:
+                update()
             self.draw(0.025)
         self.runtime.message = f'{name}: joint pose updated in the shared scene'
 
+    # SHOW_JOINT - Convert one slider angle from degrees to radians and delegate to checked joint motion.
     def set_joint(self, name, index, angle_deg):
         robot = self.load(name)
         if not 0 <= index < robot.n or not np.isfinite(angle_deg):
@@ -100,6 +123,7 @@ class RobotBridge:
         q[index] = np.deg2rad(angle_deg)
         self.move_to(name, q)
 
+    # SHOW_IK - Solve a small XYZ target while retaining orientation using a finite-difference Jacobian and damping.
     def translate(self, name, axis, distance):
         self.begin_manual(name)
         robot = self.load(name)
@@ -132,6 +156,7 @@ class RobotBridge:
             q = np.clip(q, *np.deg2rad(limits))
         raise ValueError('Cartesian target unreachable with the current orientation')
 
+    # SHOW_RESTORE - Check the base has not changed and return to the saved pre-manual pose.
     def restore(self, name):
         if name not in self.saved:
             return
@@ -148,6 +173,6 @@ class RobotBridge:
         for name in list(self.saved):
             self.restore(name)
 
+    # Delegate Home to the shared runtime/recovery system.
     def home(self, name):
-        self.begin_manual(name)
         self.runtime.home(name)

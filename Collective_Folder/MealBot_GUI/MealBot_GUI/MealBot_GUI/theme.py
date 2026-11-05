@@ -1,3 +1,5 @@
+# Purple Qt stylesheet: visual appearance only; robot motion permission comes from the runtime.
+
 """Compact purple cartoon styling. No robot-control logic is changed."""
 
 PURPLE_THEME = """
@@ -40,5 +42,6 @@ QSlider:disabled::handle:horizontal { background: #C8B8D5; border-color: #BDB0C8
 QMessageBox, QInputDialog { background: #F7F1FF; }
 """
 
+# SHOW_THEME - Apply PURPLE_THEME to the QApplication created by main_all.main().
 def apply_theme(app):
     app.setStyleSheet(PURPLE_THEME)

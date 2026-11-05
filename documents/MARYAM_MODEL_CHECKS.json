@@ -1,0 +1,125 @@
+{
+  "scope": "Internal consistency only; independent CAD and tutor approval remain to be recorded.",
+  "cases": [
+    {
+      "case": 1,
+      "q_deg": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "tool_xyz_m": [
+        2.1737480684865518e-17,
+        -7.721398068624062e-17,
+        1.168
+      ],
+      "fk_matrix_max_error": 0.0,
+      "jacobian_max_error": 1.3977818902333183e-10,
+      "ik_position_error_mm": 1.8358440876177214e-06,
+      "ik_orientation_error_deg": 1.7500919134171446e-07,
+      "ik_solution_deg": [
+        3.8610838166450168,
+        -0.0041586406317193235,
+        0.008095487097834588,
+        -0.0025470355253052494,
+        -0.003936846461359677,
+        -3.858536781085018
+      ]
+    },
+    {
+      "case": 2,
+      "q_deg": [
+        14.999999999999998,
+        -20.0,
+        25.0,
+        10.0,
+        -14.999999999999998,
+        20.0
+      ],
+      "tool_xyz_m": [
+        0.029778635185597063,
+        -0.0975908216346859,
+        1.1439521662893193
+      ],
+      "fk_matrix_max_error": 0.0,
+      "jacobian_max_error": 1.366384783096919e-10,
+      "ik_position_error_mm": 1.8478677975446877e-10,
+      "ik_orientation_error_deg": 4.151007910763516e-11,
+      "ik_solution_deg": [
+        15.00000000000462,
+        -20.00000000006711,
+        25.000000000131237,
+        9.99999999981679,
+        -15.00000000004475,
+        20.00000000018511
+      ]
+    },
+    {
+      "case": 3,
+      "q_deg": [
+        -25.0,
+        14.999999999999998,
+        -20.0,
+        -14.999999999999998,
+        20.0,
+        -29.999999999999996
+      ],
+      "tool_xyz_m": [
+        0.039424698726281085,
+        0.06820871355668388,
+        1.1517396685859653
+      ],
+      "fk_matrix_max_error": 0.0,
+      "jacobian_max_error": 1.0628065094664407e-10,
+      "ik_position_error_mm": 7.851139519910278e-11,
+      "ik_orientation_error_deg": 1.3200052954998226e-11,
+      "ik_solution_deg": [
+        -25.00000000000266,
+        15.00000000003649,
+        -20.000000000071243,
+        -14.999999999938627,
+        20.000000000029196,
+        -30.000000000061963
+      ]
+    },
+    {
+      "case": 4,
+      "q_deg": [
+        29.999999999999996,
+        -29.999999999999996,
+        40.0,
+        20.0,
+        25.0,
+        45.0
+      ],
+      "tool_xyz_m": [
+        0.025036435955189968,
+        -0.0659132366334387,
+        1.100980995320656
+      ],
+      "fk_matrix_max_error": 0.0,
+      "jacobian_max_error": 1.4453044316908858e-10,
+      "ik_position_error_mm": 2.0064114989995378e-12,
+      "ik_orientation_error_deg": 3.2629762956651886e-14,
+      "ik_solution_deg": [
+        29.999999999999993,
+        -30.000000000000462,
+        40.000000000000895,
+        20.000000000000274,
+        24.999999999999584,
+        44.999999999999666
+      ]
+    }
+  ],
+  "rmrc_samples": 141,
+  "rmrc_position_error_mm": 0.20618812591266214,
+  "rmrc_all_samples_within_configured_limits_and_guards": true,
+  "limitations": [
+    "No independent physical/CAD reference measurements in this report.",
+    "Full arm self-collision and whole-workcell collision coverage are not established.",
+    "Colour classification is vision-based task selection, not visual servoing."
+  ]
+}

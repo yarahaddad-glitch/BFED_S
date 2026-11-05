@@ -1,3 +1,6 @@
+# IntegratedMeal calls place_towel() once per meal. This is a Swift kinematic task, not hardware communication.
+# Active motion uses contact-point numerical IK and cubic joint interpolation, not Maryam's RMRC segment().
+
 import numpy as np
 from spatialmath import SE3
 from scipy.optimize import least_squares
@@ -16,16 +19,18 @@ PICKUP_POSE = [1.1275, -2.1193, -0.7422, -1.4281, -0.0986, -0.0029]
  
  
 # ---------------- ReBot helpers ----------------
+# Existing team helper: combine local ReBot link/gripper transforms with the world base for FK.
 def tool_pose(robot, q=None):
-    """Gripper pose in the WORLD (ReBot's own kinematics are relative to its base)."""
     links = robot.get_link_transforms(robot.q if q is None else q)
     return robot.base * robot.get_gripper_transforms(links, robot.gripper_opening)[0]
  
  
+# Adapted team animation helper: cubic joint interpolation, with the added configuration guard.
 def animate_joints(robot, env, target, item=None, attachment=None):
     """Smooth joint move to target; `item` follows the gripper if given."""
     start = robot.q.copy()
     target = np.asarray(target, dtype=float).reshape(6)
+    robot.recovery_payloads = [(item, attachment)] if item is not None else []
     for u in np.linspace(0, 1, STEPS):
         proposed = start + (3 * u**2 - 2 * u**3) * (target - start)
         guard = getattr(robot, 'configuration_guard', None)
@@ -37,13 +42,9 @@ def animate_joints(robot, env, target, item=None, attachment=None):
         env.step(DT)
  
  
+# Older standalone numerical solver; integrated place_towel() uses solve_contact() instead.
 def solve_joints(robot, xyz, R_goal, q_start):
-    """Joint angles that put the gripper at xyz, pointing straight down.
- 
-    The gripper may turn freely about the vertical (that's what makes every
-    spot reachable). It first starts from q_start so the arm moves smoothly;
-    if that gets stuck it tries a few other starting poses.
-    """
+
     qmin = np.asarray(robot.qlim[0], float) + 1e-3     # stay just inside the limits
     qmax = np.asarray(robot.qlim[1], float) - 1e-3
     xyz = np.asarray(xyz, float)
@@ -89,10 +90,12 @@ FINGER_CONTACT = SE3(0.09, -0.0081, -0.026)
 GRASP_ROTATION = np.array([[0., 1., 0.], [1., 0., 0.], [0., 0., -1.]])
 
 
+# SHOW_CONTACT - Add the measured finger-contact offset so IK targets the fingers, not the wrist origin.
 def contact_pose(robot, q=None):
     return tool_pose(robot, q) * FINGER_CONTACT
 
 
+# SHOW_IK - Use bounded least squares and multiple seeds for contact position/downward direction; yaw remains free.
 def solve_contact(robot, xyz, seed):
     lo, hi = np.asarray(robot.qlim) + np.array([[0.001], [-0.001]])
     def error(q):
@@ -112,6 +115,7 @@ def solve_contact(robot, xyz, seed):
                        f"(position error {np.linalg.norm(best.fun[:3])*1000:.1f} mm)")
 
 
+# SHOW_GRIPPER - Animate finger opening/closing through intermediate values while stepping the scene.
 def animate_gripper(robot, env, opening):
     for value in np.linspace(robot.gripper_opening, opening, 41)[1:]:
         robot.gripper_opening = value
@@ -120,8 +124,8 @@ def animate_gripper(robot, env, opening):
         env.step(DT)
 
 
+# SHOW_SEQUENCE - Plan approach/grasp/lift/drop targets; check contact/fit, attach towel, transfer, release and retreat.
 def place_towel(env, robot, towel, drop_pose):
-    """One towel per meal, using the supplied joint solver and animation."""
     print("[REBOT] Planning towel pickup and tray placement.", flush=True)
     start_pose = SE3(towel.T)
     up = np.zeros(3)  # solve for measured finger contact, not the wrist origin
@@ -146,7 +150,11 @@ def place_towel(env, robot, towel, drop_pose):
     if not robot.GRIPPER_MIN <= opening <= robot.GRIPPER_MAX:
         raise RuntimeError("Towel does not fit between ReBot's fingers")
     print("[REBOT] Closing fingers onto towel.", flush=True)
+    robot.recovery_payloads = [(towel, tool_pose(robot).inv() * start_pose)]
     animate_gripper(robot, env, opening)
+
+
+    # SHOW_ATTACHMENT - Save tool-to-towel pose at grasp so the towel follows without snapping.
     attachment = tool_pose(robot).inv() * start_pose
     for q in route[2:]:
         animate_joints(robot, env, q, towel, attachment)
@@ -154,6 +162,8 @@ def place_towel(env, robot, towel, drop_pose):
     if np.linalg.norm(SE3(towel.T).t - drop_pose.t) > 0.015:
         raise RuntimeError("ReBot towel placement missed the tray")
     print("[REBOT] Opening fingers to release towel.", flush=True)
+    # Stop treating the towel as held before opening and retreating.
+    robot.recovery_payloads = []
     animate_gripper(robot, env, robot.GRIPPER_MAX)
     env.step(DT)
     print("[REBOT] Towel placed on tray.", flush=True)
@@ -163,6 +173,7 @@ def place_towel(env, robot, towel, drop_pose):
  
  
 # ---------------- the paper towel job ----------------
+# Independent two-towel demo, not the function called by the integrated meal coordinator.
 def run_rebot_towels(env, robot, scene):
     robot.q = robot.q_home.copy()
     env.step(DT)

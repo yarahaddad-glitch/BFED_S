@@ -1,3 +1,5 @@
+# Manual-control widgets: queue requests through RobotBridge; do not move robot geometry directly here.
+
 """Individual joint jog page, using actual robot classes through RobotBridge."""
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QPushButton,
                                QSlider,QGroupBox,QGridLayout,QMessageBox,QLineEdit)
@@ -5,6 +7,7 @@ from PySide6.QtCore import Qt, QTimer
 import numpy as np
 
 class ManualMode(QWidget):
+    # SHOW_MANUAL_GUI - Build robot selector, degree sliders, XYZ jogs and timers; connect Qt signals to handlers.
     def __init__(self,bridge,system,host=None):
         super().__init__()
         self.bridge,self.system=bridge,system
@@ -44,13 +47,16 @@ class ManualMode(QWidget):
                 button.clicked.connect(lambda _,a=axis,s=sign:self.translate(a,s*.01))
                 cart_grid.addWidget(button,axis,column)
         layout.addWidget(cart)
+        self.pose_readout=QLabel('Tool XYZ (m): select an arm')
+        self.pose_readout.setWordWrap(True)
+        layout.addWidget(self.pose_readout)
         self.joint_target=QLineEdit()
         self.joint_target.setPlaceholderText('Six joint angles (degrees)')
         layout.addWidget(self.joint_target)
         self.target_btn=QPushButton('Move to supplied joint pose')
         self.target_btn.clicked.connect(self.move_target)
         layout.addWidget(self.target_btn)
-        self.home_btn=QPushButton('Home (team recovery hook)');layout.addWidget(self.home_btn)
+        self.home_btn=QPushButton('Home selected arm (checked recovery)');layout.addWidget(self.home_btn)
         self.status=QLabel('Swift not launched.');self.status.setWordWrap(True);layout.addWidget(self.status)
         layout.addStretch(1)
         self.load_btn.clicked.connect(self.load_selected)
@@ -63,10 +69,11 @@ class ManualMode(QWidget):
         self.jog_timer=QTimer(self);self.jog_timer.setInterval(60)
         self.jog_timer.timeout.connect(self.flush_jogs);self.jog_timer.start()
 
+    # Opening Manual requests pause before permitting manual commands.
     def activate(self):
         runtime=self.system.runtime
         if runtime:
-            runtime.request_pause()
+            runtime.request_pause('Manual controls opened. Use Automatic > Start / Resume to continue.')
             state,_=runtime.status()
             if self.system.state!=state:
                 self.system.state=state
@@ -82,6 +89,7 @@ class ManualMode(QWidget):
             self.load_selected()
         else:
             self.status.setText('Pause automatic motion, then select / save pose.')
+    # Read the selected live arm's limits/angles and queue saving its pre-manual pose.
     def load_selected(self):
         if not self.system.allow_manual(): return
         name=self.selector.currentText()
@@ -100,17 +108,19 @@ class ManualMode(QWidget):
                 slider.setValue(int(round(angles[i])))
                 self.values[i].setText(f'{angles[i]:.1f}°')
                 slider.blockSignals(False)
-            self.limit_note.setText(f'{source}. Existing guards plus team manual-safety hook; whole-cell coverage pending Hannah.')
+            self.limit_note.setText(f'{source}. Sampled routes are checked before movement; blocked requests are rejected.')
             self.system.enter_manual()
             self.status.setText(f'{name} loaded ({robot.n} joints).')
             self.refresh_permissions()
         except Exception as e:
             self.status.setText('Load failed: '+str(e))
             QMessageBox.warning(self,'Robot load failed',str(e))
+    # Enable motion widgets only when the current system state permits manual operation.
     def refresh_permissions(self,*_):
         allowed=self.system.allow_manual()
         self.load_btn.setEnabled(allowed)
         self.home_btn.setEnabled(allowed and self.name is not None)
+        self.home_btn.setToolTip('Recover the selected arm at its current base position; all other jobs stay paused.')
         self.restore_btn.setEnabled(allowed and self.name is not None)
         self.target_btn.setEnabled(allowed and self.name is not None)
         for s in self.sliders:s.setEnabled(allowed and self.name is not None)
@@ -118,6 +128,7 @@ class ManualMode(QWidget):
     def increment(self,index,direction):
         if self.name and self.system.allow_manual():
             s=self.sliders[index];s.setValue(max(s.minimum(),min(s.maximum(),s.value()+direction)))
+    # SHOW_SLIDER - Record the latest requested joint angle; defer execution to the batching timer.
     def jog(self,index,value):
         if not self.name or not self.system.allow_manual():return
         try:
@@ -127,11 +138,13 @@ class ManualMode(QWidget):
             self.status.setText(f'{self.name}: J{index+1} = {value}°')
         except Exception as e:
             self.status.setText(f'Jog rejected: {e}')
+    # Request checked recovery of the selected arm through the runtime.
     def go_home(self):
         if not self.name or not self.system.allow_manual():return
         name=self.name
         self.queue(lambda:self.bridge.home(name))
 
+    # SHOW_COMMAND_QUEUE - Submit scene work to the runtime and record completion/rejection for the GUI.
     def queue(self, action, success='Robot command completed'):
         runtime=self.system.runtime
         if not runtime:return
@@ -149,6 +162,7 @@ class ManualMode(QWidget):
                     runtime.manual_pending-=1
         runtime.submit(execute)
 
+    # Send pending slider targets through bridge.set_joint(), preserving robot/joint identifiers.
     def flush_jogs(self):
         pending,self.pending_jogs=self.pending_jogs,{}
         for (name,index),value in pending.items():
@@ -156,16 +170,19 @@ class ManualMode(QWidget):
                 self.queue(lambda n=name,j=index,v=value:self.bridge.set_joint(n,j,v),
                            f'{name}: J{index+1} = {value:.1f} degrees')
 
+    # SHOW_RESTORE - Queue a checked return to the saved pre-manual joint configuration.
     def restore_pose(self):
         if self.name and self.system.allow_manual():
             name=self.name
             self.queue(lambda:self.bridge.restore(name))
 
+    # SHOW_CARTESIAN - Queue a small world-axis movement; the bridge performs numerical pose solving.
     def translate(self,axis,distance):
         if self.name and self.system.allow_manual():
             name=self.name
             self.queue(lambda:self.bridge.translate(name,axis,distance))
 
+    # Validate six entered degree values, convert to radians and queue a joint-pose request.
     def move_target(self):
         if not self.name or not self.system.allow_manual():return
         try:
@@ -177,9 +194,12 @@ class ManualMode(QWidget):
         except ValueError as exc:
             self.status.setText(str(exc))
 
+    # Read current tool XYZ and joint angles without overwriting an in-progress slider request.
     def refresh_angles(self):
         if not self.name:return
         try:
+            xyz=self.bridge.tool_pose(self.name).t
+            self.pose_readout.setText('Tool XYZ (m): '+', '.join(f'{v:.3f}' for v in xyz))
             for slider,label,value in zip(self.sliders,self.values,self.bridge.angles_deg(self.name)):
                 pending=self.pending_jogs or (self.system.runtime and self.system.runtime.manual_pending)
                 if not slider.isSliderDown() and not pending:

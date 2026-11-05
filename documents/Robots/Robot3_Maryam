@@ -21,18 +21,22 @@ Units: metres and radians in Python. The GUI presents joint angles in degrees.
 
 | Joint | d (m) | a (m) | alpha (deg) | theta expressed using GUI q (deg) | Mechanical q range (deg) |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 0.360 | 0 | 90 | -q1 - 90 | -180 to 180 |
+| 1 | 0.360 | 0 | 90 | q1 - 90 | -180 to 180 |
 | 2 | 0 | 0.355 | 0 | q2 + 90 | -135 to 135 |
-| 3 | 0 | 0 | 90 | -q3 + 90 | -155 to 155 |
+| 3 | 0 | 0 | 90 | q3 + 90 | -155 to 155 |
 | 4 | 0.375 | 0 | 90 | q4 + 180 | -200 to 200 |
-| 5 | 0 | 0 | -90 | -q5 | -125 to 125 |
+| 5 | 0 | 0 | -90 | q5 | -125 to 125 |
 | 6 | 0.078 | 0 | 0 | q6 + 90 | -360 to 360 |
 
-Joint signs and offsets are deliberate model conventions (`flip=True` on 1, 3, 5).
+Joint coordinates use the standard positive right-hand rotation with the offsets
+shown above. Earlier flip flags did not affect this installed Toolbox's link.A
+implementation for these links. They were removed so declarations, the explicit
+DH product, FK and Jacobian agree; the existing FK motion was preserved.
 Mechanical ranges match the cited specification; smaller software ranges and the
 controller's margin restrict the simulated task further.
 
-Mesh assets are `Maryam_Work/RS007N-BASE.STL` and `RS007N-J1.STL` through `J6.STL`.
+Mesh assets are in `Maryam_Work/Meshes_RS007N/`: `RS007N-BASE.STL` and
+`RS007N-J1.STL` through `RS007N-J6.STL`.
 Record their actual origin, CAD editing work, units and attribution here before
 submission. `meshes_are_global_at_home=True` means the assets share the zero-pose
 CAD frame; each moving mesh is then transformed by its corresponding joint chain.

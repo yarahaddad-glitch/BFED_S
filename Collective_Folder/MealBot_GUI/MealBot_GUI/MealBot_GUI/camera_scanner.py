@@ -1,4 +1,7 @@
-"""Qt camera popup, using the existing team's HSV colour classifier."""
+# Active Qt webcam dialog: runtime.scan() requests a result; tick() reads/classifies frames on the GUI timer.
+# ColourScanner in maryam_meal_dispatch supplies camera access, HSV classification and image overlays.
+
+
 from collections import deque
 from time import monotonic
 
@@ -11,6 +14,7 @@ from Maryam_Work.maryam_meal_dispatch import ColourScanner, DetectionResult
 
 
 class CameraScanner(QDialog):
+    # Create preview, cancel control and 40 ms timer; prepare the stable-frame vote deque.
     def __init__(self, runtime, parent):
         super().__init__(parent)
         self.runtime = runtime
@@ -41,6 +45,7 @@ class CameraScanner(QDialog):
         self.timer.timeout.connect(self.tick)
         self.timer.start()
 
+    # Release the webcam and hide the dialog after scanning or shutdown.
     def release(self):
         self.pending_result = None
         if self.capture is not None:
@@ -48,6 +53,7 @@ class CameraScanner(QDialog):
             self.capture = None
         self.hide()
 
+    # Return a cancelled DetectionResult and release the camera so the worker does not wait forever.
     def cancel(self):
         self.runtime.finish_scan(DetectionResult(None))
         self.release()
@@ -59,12 +65,14 @@ class CameraScanner(QDialog):
     def reject(self):
         self.cancel()
 
+    # Display the accepted colour and delay returning it for a one-second acknowledgement.
     def show_identified(self, result):
         self.identified.setText(f'Colour identified - {result.colour.capitalize()}')
         self.prompt.setText('Identified')
         self.pending_result = result
         self.result_ready_at = monotonic() + 1.0
 
+    # SHOW_SCAN_LOOP - While RUNNING and requested: read webcam, classify HSV, update preview and accept stable votes.
     def tick(self):
         if self.runtime.closed:
             self.release()
@@ -80,6 +88,7 @@ class CameraScanner(QDialog):
         if self.pending_result is not None:
             if monotonic() >= self.result_ready_at:
                 result = self.pending_result
+                # SHOW_RESULT - Publish the accepted result and wake the waiting meal-task worker.
                 self.runtime.finish_scan(result)
                 self.release()
             return
@@ -97,8 +106,10 @@ class CameraScanner(QDialog):
                     raise RuntimeError('Camera stopped providing frames')
                 return
             self.failures = 0
+            # Reuse maryam_meal_dispatch's HSV classifier on this webcam frame.
             colour, coverage, box = self.classifier.classify(frame)
             self.classifier._draw_overlay(frame, box, colour)
+            # SHOW_PREVIEW - Convert OpenCV BGR to RGB and copy the frame into the Qt preview.
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             height, width, _ = rgb.shape
             image = QImage(rgb.data, width, height, rgb.strides[0], QImage.Format_RGB888).copy()
@@ -111,6 +122,8 @@ class CameraScanner(QDialog):
                 if self.removed >= 6:
                     self.yellow_held = False
                 return
+            # SHOW_STABILITY - Require 12 consecutive identical classifications by default.
+            # This is the active GUI vote check, separate from ColourScanner.scan().
             self.votes.append(colour)
             if (colour is not None and len(self.votes) == self.votes.maxlen
                     and all(v == colour for v in self.votes)):

@@ -1,4 +1,3 @@
-"""Reusable Maryam movements: blue/green pickup, belt lap and handout."""
 import sys
 from pathlib import Path
 from functools import lru_cache
@@ -25,11 +24,8 @@ from Collective_Folder.EnviroParts_S.Full_sim import (
     TRAY_SCALE, add_maryam_robot, add_tray_stacks,
     configure_swift_server, create_environment)
 
-# ============================================================
-# CONFIG  - the numbers you are most likely to change
-# ============================================================
+
 # Where the robot sets the tray down, measured from the ROBOT BASE (metres).
-# Keep it close to the robot so RMRC can reach it.
 PLACE_FROM_ROBOT = (0.0, -0.45)        # centre on belt within reach of corner grip
 BELT_SURFACE_Z = 0.67                  # tray bottom: lowered 3 cm onto the belt
 BELT_MIDDLE_X = 14.96                  # destination toward +X, opposite the previous travel
@@ -50,14 +46,13 @@ SHOW_MARKERS = False                   # optional red/yellow debug target marker
 RETURN_HOME_AFTER_PLACE = False        # True = robot goes back to its start position each cycle
 
 
-# ============================================================
-# 1. SCENE
-# ============================================================
+# scene
 def build_scene():
     configure_swift_server()
     env = swift.Swift()
     env.launch(realtime=True)
 
+    # These scene/model helpers come from Collective_Folder/EnviroParts_S/Full_sim.py.
     objects = create_environment(env)
     # Hide the static display tray; only the robot's stack trays belong here.
     # Park it offstage because Swift.remove leaves holes that break env.step.
@@ -68,31 +63,32 @@ def build_scene():
     trays = add_tray_stacks(env, maryambot)
     objects.update(trays)
     env.step()
+    # Return the same live objects that the task coordinator and GUI will share.
     return env, objects, maryambot, trays
 
 
+# SHOW_CONTROLLER - Connect the live DH robot to its RMRC controller and STL collision boxes.
 def build_controller(maryambot):
-    robot_files = [ASSIGNMENT_ROOT / "Maryam_Work" / f"RS007N-J{i}.STL"
+    robot_files = [ASSIGNMENT_ROOT / "Maryam_Work" / "Meshes_RS007N" / f"RS007N-J{i}.STL"
                    for i in range(1, 7)]
     return RobotController(
         maryambot, robot_files,
         obstacles=[],            # bar-plane guard below; full scene collision is separate
         stl_scale=1.0,
         barrier_y=BAR_ROBOT_LIMIT_Y,
-        base_stl=ASSIGNMENT_ROOT / 'Maryam_Work/RS007N-BASE.STL',
+        base_stl=ASSIGNMENT_ROOT / 'Maryam_Work/Meshes_RS007N/RS007N-BASE.STL',
     )
 
 
-# ============================================================
-# 2. CONVEYOR LAYOUT
-# ============================================================
+# Get a scene mesh's world position, or use the supplied fallback if it is missing.
 def mesh_xyz(objects, name, fallback):
     mesh = objects.get(name)
     return SE3(mesh.T).t if mesh is not None else np.asarray(fallback, dtype=float)
 
 
+# SHOW_LAYOUT - Calculate tray-centre targets using the robot base and conveyor coordinates.
+# The middle X uses BELT_MIDDLE_X when configured; otherwise it uses the end-point average.
 def build_belt_layout(objects, maryambot):
-    """Set-down point near the robot, middle point halfway along the belt."""
     end_a = mesh_xyz(objects, "Conv2_1", (14.96, 3.429, 0.58))   # belt end, robot side
     end_b = mesh_xyz(objects, "Conv2_2", (11.92, 3.429, 0.58))   # belt end, far side
     middle_x = BELT_MIDDLE_X if BELT_MIDDLE_X is not None else 0.5 * (end_a[0] + end_b[0])
@@ -105,8 +101,8 @@ def build_belt_layout(objects, maryambot):
     return BeltLayout(place_centre=place, middle_centre=middle, speed=BELT_SPEED)
 
 
+# Add an optional target marker for debugging; disabled by SHOW_MARKERS in the normal setup.
 def add_marker(env, xyz, colour):
-    """Small ball so you can SEE a target in Swift while tuning the config."""
     if Sphere is None:
         return
     try:
@@ -117,8 +113,9 @@ def add_marker(env, xyz, colour):
         print("[MARKER] could not add marker:", exc)
 
 
+# Older base-class meal demo: animate a belt lap and add food props halfway around.
+# The final IntegratedMeal overrides serve() and uses its own station-to-station conveyor.
 def carry_full_loop(env, objects, tray, layout, dt, colour):
-    """Follow all four belt sections, returning to the exact pickup pose."""
     if layout.speed <= 0 or dt <= 0:
         raise ValueError("Belt speed and animation timestep must be positive")
     initial = SE3(tray.T)
@@ -159,9 +156,10 @@ def carry_full_loop(env, objects, tray, layout, dt, colour):
     return payload
 
 
+# SHOW_FOOD_GEOMETRY - Used by IntegratedMeal: calculate food scale and bottom-centre offset.
+# Cache the result for each colour so the DAE geometry does not need to be parsed repeatedly.
 @lru_cache(maxsize=2)
 def food_geometry(colour):
-    """Bounds include the Blender node transform in these single-mesh assets."""
     filename = {"blue": "cookies.dae", "green": "lettuce.dae"}[colour.lower()]
     path = ASSIGNMENT_ROOT / "Collective_Folder/EnviroParts_S/food" / filename
     root = ET.parse(path).getroot()
@@ -171,6 +169,7 @@ def food_geometry(colour):
     points = np.fromstring(positions.text, sep=" ").reshape(-1, 3)
     matrix = np.fromstring(root.find('.//c:visual_scene/c:node/c:matrix', ns).text,
                            sep=" ").reshape(4, 4)
+    # Apply the DAE's internal node transform before measuring visible food dimensions.
     points = points @ matrix[:3, :3].T + matrix[:3, 3]
     lo, hi = points.min(axis=0), points.max(axis=0)
     # Keep food within the existing loaded-tray clearance envelope.
@@ -179,8 +178,9 @@ def food_geometry(colour):
     return path, scale, bottom_centre * scale
 
 
+# Older base-class demo helper: create food/towel props and animate them onto the tray.
+# In the final integrated flow, Yara places the food and ReBot places the towel instead.
 def add_meal(env, tray, colour, dt):
-    """Load actual cookies for blue and lettuce for green, plus a folded towel."""
     centre = TRAY_CENTRE_UNSCALED * TRAY_SCALE
     path, scale, bottom_centre = food_geometry(colour)
     props = []
@@ -201,14 +201,15 @@ def add_meal(env, tray, colour, dt):
     return props
 
 
+# SHOW_APERTURE - Create a checker for the loaded tray's clearance above the bench/through bars.
 def serving_gap_validator(gap):
-    """Check the loaded tray envelope at every planned sample crossing the bars."""
     local_centre = TRAY_CENTRE_UNSCALED * TRAY_SCALE
     corners = np.array([local_centre + [x, y, z]
                         for x in (-0.30, 0.30)
                         for y in (-0.20, 0.20)
                         for z in (0.0, LOADED_TRAY_HEIGHT)])
 
+    # Transform the tray envelope's eight corners into world coordinates and check their extents.
     def fits(pose):
         world = corners @ pose.R.T + pose.t
         lo, hi = world.min(axis=0), world.max(axis=0)
@@ -220,11 +221,13 @@ def serving_gap_validator(gap):
         return (lo[0] >= gap[0] - 0.40355 + 0.008
                 and hi[0] <= gap[0] + 0.40355 - 0.008
                 and hi[2] <= 0.7338 - 0.008)
+    # Return the checker function itself; TrayDelivery calls it for planned tray poses.
     return fits
 
 
+# SHOW_RECIPIENT - Animate the recipient pulling the RELEASED meal through the opening.
+# Precheck the route, then keep food/towels fixed relative to the moving tray.
 def collect_served_meal(env, tray, payload, gap, dt, clearance=None):
-    """Recipient pulls the released tray through; robot remains inside the bars."""
     start = SE3(tray.T)
     centre = start.t + start.R @ (TRAY_CENTRE_UNSCALED * TRAY_SCALE)
     distance = gap[1] + 0.30 - centre[1]
@@ -246,12 +249,9 @@ def collect_served_meal(env, tray, payload, gap, dt, clearance=None):
 
 
 class MaryamMovements:
-    """Four named movements selected by colour, independent of arrival order.
+    # Shared Maryam actions inherited by the final IntegratedMeal coordinator.
 
-    TrayDelivery reuses verified disk routes for each stack height and loaded
-    tray pose. Only a new/changed geometry needs the initial RMRC search.
-    """
-
+    # SHOW_SETUP - IntegratedMeal calls this through super().__init__(): wire the shared components.
     def __init__(self, env, objects, robot, trays):
         self.env, self.objects = env, objects
         self.home_q = robot.q.copy()
@@ -266,38 +266,45 @@ class MaryamMovements:
             env, robot, self.controller, self.layout, tray_scale=TRAY_SCALE,
             return_home=RETURN_HOME_AFTER_PLACE,
             animation_speed=ROBOT_ANIMATION_SPEED, cache_dir=ROUTE_CACHE_DIR)
+        # SHOW_COLLISION - Let delivery/controller checks include trays still waiting on the bench.
+        # This hook adds constraints; the serving plane and link boxes are set in build_controller().
         self.delivery.stationary_trays = list(trays.values())
         self.controller.extra_valid = lambda q:self.delivery.queued_trays_clear(
             q, active_tray=getattr(self.delivery, '_planning_tray', None))
+        # SHOW_DISPATCH - Store function references so IntegratedMeal can select actions by colour.
         self.pickups = {"blue": self.pick_blue, "green": self.pick_green}
         self.handouts = {"blue": self.handout_blue, "green": self.handout_green}
 
+    # SHOW_PICKUP - Blue stack to conveyor: TrayDelivery plans IK/RMRC and executes the transfer.
     def pick_blue(self, tray, label):
-        """Blue stack -> conveyor."""
         return self.delivery.deliver(tray, label=label)
 
+    # Green stack to conveyor: reuse the same delivery algorithm with the selected green mesh.
     def pick_green(self, tray, label):
-        """Green stack -> conveyor, using the same transfer as blue."""
         return self.delivery.deliver(tray, label=label)
 
+    # Blue completed meal: delegate to the shared handout sequence.
     def handout_blue(self, tray, label):
-        """Collect the loaded blue tray and hand it through the serving gap."""
         return self._handout(tray, label)
 
+    # Green completed meal: delegate to the same handout sequence.
     def handout_green(self, tray, label):
-        """Collect the loaded green tray and hand it through the serving gap."""
         return self._handout(tray, label)
 
+    # SHOW_HANDOUT - Collect a loaded tray, turn/align it and present it at the serving opening.
     def _handout(self, tray, label):
         gap = mesh_xyz(self.objects, "frontBars", (13.4, 4.7, 0.5))
         gap = gap + np.asarray(HANDOUT_GAP_LOCAL)
         inside = gap + [.06, -HANDOUT_SIDE_CLEARANCE, 0]
         handout = gap + [.06, HANDOUT_INSERTION, 0]
+        # Approach high, lower inside the workcell, then slide toward the serving gap.
         align = inside.copy()
         align[1] = inside[1] - .15
         align[2] = BELT_SURFACE_Z + 0.18
         low = align.copy()
         low[2] = inside[2]
+        # SHOW_TRAY_CONNECTION - Reuse TrayDelivery with handout targets and an aperture checker.
+        # Request a -90 degree world-Z tray turn; the tray module calculates the required tool motion.
         outcome = self.delivery.deliver(
             tray, label=f"{label} loaded meal", destination=handout,
             waypoints=[align, low, inside], carry_validator=serving_gap_validator(gap),
@@ -311,6 +318,7 @@ class MaryamMovements:
             clearance=lambda pose:self.delivery.tray_clears_robot(self.delivery.robot.q, pose)
             and self.delivery.tray_clears_obstacles(pose)
             and self.delivery.queued_trays_clear(self.delivery.robot.q, pose, tray))
+        # main_all's MealTrayTracker restores the served meshes for its prisoner animation.
         self.last_handout_pose = SE3(tray.T)
         for shape, _ in self.delivery.payload:
             shape.T = SE3(0, 0, -100).A
@@ -321,8 +329,9 @@ class MaryamMovements:
         self.return_home()
         return outcome
 
+    # SHOW_HOME - Return the empty arm to saved startup joints using checked cubic joint blending.
+    # This normal task return is separate from the GUI's all-arm emergency recovery workflow.
     def return_home(self):
-        """Return to the startup joint configuration with prechecked joint motion."""
         robot = self.delivery.robot
         start = robot.q.copy()
         count = max(60, int(np.ceil(np.max(np.abs(start-self.home_q)) / .01)))
@@ -335,12 +344,9 @@ class MaryamMovements:
         getattr(self, 'activity', lambda message:None)('MaryamBot: returning home')
         self.delivery._execute(path)
 
+    # SHOW_BASE_DEMO - Older base-class meal flow; NOT the serve() used by final IntegratedMeal.
+    # The final override calls Yara and ReBot instead of carry_full_loop()/add_meal().
     def serve(self, colour, on_conveyor):
-        """Run one detected colour; return False only when its stack is empty.
-
-        A motion failure stops the cycle for inspection, rather than scanning
-        another prisoner while a tray may still occupy the robot or belt.
-        """
         colour = colour.lower()
         if colour not in self.pickups:
             raise ValueError(f"Unsupported tray colour: {colour}")

@@ -74,6 +74,7 @@ def feed_iso(env, trays, **unused):
     held = {}
  
     hannahbot = HannahBot()
+    hannahbot.recovery_payloads = []
     hannahbot.q = np.deg2rad(READY_POSE_DEG)
     hannahbot.base = SE3(robot["x"], robot["y"], DECK_Z)
     hannahbot.add_to_env(env)
@@ -257,6 +258,7 @@ def feed_iso(env, trays, **unused):
         T_tray = np.asarray(tray.T, float)
         held.update(tray=tray, offset=T_tray[:3, 3] - tool().t,
                     R=T_tray[:3, :3].copy(), yaw=robot["yaw"])
+        hannahbot.recovery_payloads = [(tray, tool().inv() * SE3(tray.T))]
  
         print("Lift")
         lift_start = tool().t
@@ -282,6 +284,7 @@ def feed_iso(env, trays, **unused):
         print("Lower")
         arm_to(tool().t - [0, 0, lifted], seconds=3.0)
         print("Release tray")
+        hannahbot.recovery_payloads = []
         held.clear()
         print("Back away")
         drive(-BACK_OFF)

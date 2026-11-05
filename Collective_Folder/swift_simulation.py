@@ -11,7 +11,7 @@ def create_environment(env):  # Use the existing Swift simulation
     collective_folder = os.path.dirname(os.path.abspath(__file__))
     assignment_folder = os.path.dirname(collective_folder)
 
-    maryam_folder = os.path.join(assignment_folder, "Maryam_Work")
+    maryam_folder = os.path.join(assignment_folder, "Maryam_Work", "Meshes_RS007N")
     yara_folder = os.path.join(assignment_folder, "Yara_Work", "EnviroParts")
 
     # Mesh file locations
